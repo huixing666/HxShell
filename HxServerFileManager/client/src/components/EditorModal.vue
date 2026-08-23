@@ -1,6 +1,6 @@
 <script setup>
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api.js'
 
 const props = defineProps({
@@ -113,6 +113,29 @@ function openSearch() {
   cm?.openSearch()
 }
 
+// 关闭守卫：有未保存修改时先询问。三选一：保存并关闭 / 直接关闭 / 取消（Esc、点 X 关掉确认框）。
+// done 由调用方给出：el-dialog before-close 的 done（真正关弹窗）或底部的直接 emit('close')。
+// 选「保存并关闭」时保存失败（error 被置位）不关闭，留在编辑器里处理错误。
+function guardClose(done) {
+  if (!dirty.value || loading.value) {
+    done()
+    return
+  }
+  ElMessageBox.confirm('当前文件有未保存的修改，直接关闭将丢失这些改动。', '未保存的修改', {
+    confirmButtonText: '保存并关闭',
+    cancelButtonText: '直接关闭',
+    distinguishCancelAndClose: true,
+    type: 'warning',
+  })
+    .then(async () => {
+      await save()
+      if (!error.value) done()
+    })
+    .catch((action) => {
+      if (action === 'cancel') done() // 「直接关闭」；close（Esc/X）= 取消操作，留在编辑器
+    })
+}
+
 watch(wrap, (v) => cm?.setWrap(v))
 // 组件由父级 v-if 创建/销毁，路径在挂载时就已就绪；挂载后再建编辑器（此时 host 才有 DOM）
 onMounted(loadContent)
@@ -132,6 +155,7 @@ onBeforeUnmount(() => {
     :show-close="true"
     destroy-on-close
     :close-on-click-modal="false"
+    :before-close="guardClose"
     @close="emit('close')"
   >
     <template #header>
@@ -167,7 +191,7 @@ onBeforeUnmount(() => {
           <span class="hint">{{ lines }} 行 · Ctrl+F 查找 · Alt+G 跳转行 · Ctrl+S 保存</span>
         </div>
         <div class="foot-right">
-          <el-button @click="emit('close')">关闭</el-button>
+          <el-button @click="guardClose(() => emit('close'))">关闭</el-button>
           <el-button type="primary" :loading="saving" :disabled="loading" @click="save">
             {{ saving ? '保存中…' : '保存 (Ctrl+S)' }}
           </el-button>
