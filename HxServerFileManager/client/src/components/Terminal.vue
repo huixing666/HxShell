@@ -6,6 +6,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { api } from '../api.js'
 import { useSettings } from '../useSettings.js'
+import { commandCategories } from '../commandLibrary.js'
 
 // 终端宏（后端 Data/settings.json）：命名命令片段，点击即发送/填入。按连接（connKey）隔离
 // 命令历史：本连接执行过的命令（快捷命令回车 / 交互终端按回车），双击可再次执行，同样按 connKey 隔离
@@ -89,6 +90,50 @@ async function removeMacro(m) {
   } catch (e) {
     ElMessage.error(e.message)
   }
+}
+
+// ---- 常用命令下拉：内置分类命令库（commandLibrary.js），el-popover 菜单（搜索 + 分组列表） ----
+const cmdPopVisible = ref(false)
+const cmdSearch = ref('')
+const cmdSearchRef = ref(null)
+const cmdPlaceholderRe = /<[^>]+>/
+// 搜索结果（跨分类平铺）；未搜索时直接分组展示 commandCategories，不走这个
+const filteredCommands = computed(() => {
+  const kw = cmdSearch.value.trim().toLowerCase()
+  if (!kw) return []
+  const list = []
+  for (const cat of commandCategories) {
+    for (const c of cat.commands) {
+      if (c.name.toLowerCase().includes(kw) || c.cmd.toLowerCase().includes(kw) || cat.name.toLowerCase().includes(kw)) {
+        list.push({ ...c, cat: cat.name, hasPh: cmdPlaceholderRe.test(c.cmd) })
+      }
+    }
+  }
+  return list
+})
+
+// 点击命令：交互终端发送执行；带 <占位符> 的只发送不回车（替换占位符后自行回车）；
+// 快捷命令模式填入输入框（可再编辑）。执行后收起下拉
+function useCommand(c) {
+  cmdPopVisible.value = false
+  if (mode.value === 'interactive') {
+    sendInput(c.hasPh ? c.cmd : c.cmd + '\r')
+    xterm?.focus()
+  } else {
+    command.value = c.cmd
+    inputRef.value?.focus()
+  }
+  if (c.hasPh) ElMessage.info('命令已发送（未回车）：把 <占位符> 替换为实际值后回车执行')
+}
+
+// 搜索框里直接回车：执行第一条匹配
+function useFirstMatch() {
+  if (filteredCommands.value.length) useCommand(filteredCommands.value[0])
+}
+
+// 弹出后聚焦搜索框
+function onCmdPopShow() {
+  nextTick(() => cmdSearchRef.value?.focus())
 }
 
 // 两种模式：
@@ -621,6 +666,68 @@ onUnmounted(() => {
         :disabled="lines.length === 0"
         @click="lines = []"
       >清空</el-button>
+      <!-- 常用命令下拉：搜索 + 分类分组，点击发送到终端（带 <占位符> 的只发送不回车） -->
+      <el-popover
+        v-model:visible="cmdPopVisible"
+        trigger="click"
+        placement="bottom-end"
+        :width="'min(430px, 92vw)'"
+        popper-class="cmdpop"
+        @show="onCmdPopShow"
+      >
+        <template #reference>
+          <el-button
+            size="small"
+            text
+            :type="cmdPopVisible ? 'primary' : undefined"
+            title="常用命令（可搜索，点击执行）"
+          >
+            <el-icon :size="14" style="margin-right: 3px"><Menu /></el-icon>常用命令
+          </el-button>
+        </template>
+        <div class="cmd-pop-body">
+          <el-input
+            ref="cmdSearchRef"
+            v-model="cmdSearch"
+            size="small"
+            placeholder="搜索命令，回车执行第一条…"
+            clearable
+            @keyup.enter="useFirstMatch"
+          />
+          <div class="cmd-pop-list">
+            <template v-if="cmdSearch.trim()">
+              <div
+                v-for="c in filteredCommands"
+                :key="'s:' + c.cat + ':' + c.name"
+                class="cmd-row"
+                :title="`${c.cat} · ${c.cmd}${c.hasPh ? '（含 <占位符>，点击只发送不执行）' : ''}`"
+                @click="useCommand(c)"
+              >
+                <span class="cmd-name">{{ c.name }}<em v-if="c.hasPh" class="ph-mark">*</em></span>
+                <span class="cmd-cat-tag">{{ c.cat }}</span>
+                <span class="cmd-text">{{ c.cmd }}</span>
+              </div>
+              <div v-if="filteredCommands.length === 0" class="cmd-empty">没有匹配的命令</div>
+            </template>
+            <template v-else>
+              <div v-for="cat in commandCategories" :key="cat.name" class="cmd-group">
+                <div class="cmd-cat">{{ cat.name }}</div>
+                <div
+                  v-for="c in cat.commands"
+                  :key="cat.name + ':' + c.name"
+                  class="cmd-row"
+                  :title="`${c.cmd}${cmdPlaceholderRe.test(c.cmd) ? '（含 <占位符>，点击只发送不执行）' : ''}`"
+                  @click="useCommand({ ...c, hasPh: cmdPlaceholderRe.test(c.cmd) })"
+                >
+                  <span class="cmd-name">{{ c.name }}<em v-if="cmdPlaceholderRe.test(c.cmd)" class="ph-mark">*</em></span>
+                  <span class="cmd-text">{{ c.cmd }}</span>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div class="cmd-pop-foot">点击执行 · 带 <b>*</b> 的命令需替换 &lt;占位符&gt; 后回车</div>
+        </div>
+      </el-popover>
       <el-button
         v-if="mode === 'interactive' && kbdLockAvailable"
         size="small"
@@ -994,5 +1101,84 @@ onUnmounted(() => {
 }
 .xterm-wrap :deep(.xterm-screen) {
   height: 100%;
+}
+</style>
+
+<style>
+/* 常用命令下拉：el-popover 内容传送到 body，scoped 样式够不着，用 cmdpop 前缀走全局 */
+.cmdpop .cmd-pop-body {
+  display: flex;
+  flex-direction: column;
+}
+.cmdpop .cmd-pop-list {
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 8px;
+}
+.cmdpop .cmd-group + .cmd-group {
+  margin-top: 2px;
+}
+.cmdpop .cmd-cat {
+  font-size: 11.5px;
+  color: #8a97a5;
+  padding: 7px 8px 3px;
+}
+.cmdpop .cmd-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.cmdpop .cmd-row:hover {
+  background: #eef4fd;
+}
+.cmdpop .cmd-name {
+  font-size: 12.5px;
+  color: #1f2d3d;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cmdpop .cmd-cat-tag {
+  font-size: 10.5px;
+  color: #2d6cdf;
+  background: #e8f1ff;
+  border-radius: 999px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+.cmdpop .cmd-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: #8a97a5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+.cmdpop .ph-mark {
+  font-style: normal;
+  color: #e6a23c;
+  margin-left: 2px;
+}
+.cmdpop .cmd-empty {
+  font-size: 12px;
+  color: #8a97a5;
+  padding: 12px 6px;
+  text-align: center;
+}
+.cmdpop .cmd-pop-foot {
+  font-size: 11.5px;
+  color: #a0acb9;
+  padding-top: 7px;
+  margin-top: 6px;
+  border-top: 1px solid #eef2f7;
+}
+.cmdpop .cmd-pop-foot b {
+  color: #e6a23c;
+  font-weight: 400;
 }
 </style>
