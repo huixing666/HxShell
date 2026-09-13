@@ -117,6 +117,10 @@ export const api = {
   deleteConnection: (id) =>
     request(`/api/connections/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
+  // 复制（克隆）已保存连接：新 Id、名称加"-副本"，凭据/代理一并复制；复制后可编辑改目标主机
+  copyConnection: (id) =>
+    request(`/api/connections/${encodeURIComponent(id)}/copy`, { method: 'POST' }),
+
   // 导出/导入连接（导出为明文 JSON，含密码/私钥，用于备份迁移）
   exportConnections: () => request('/api/connections/export'),
   // mode: 'merge'（去重合并，host|port|username|password 一致才判重）| 'replace'（覆盖导入）

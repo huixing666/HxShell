@@ -162,6 +162,17 @@ async function doDelete(item) {
     error.value = e.message
   }
 }
+
+// 复制连接：克隆一份相同配置（新 Id、名称加"-副本"），用于快速添加同配置的其他服务器
+async function doCopy(item) {
+  try {
+    const res = await api.copyConnection(item.id)
+    ElMessage.success(`已复制为「${res.name}」，编辑它可改成其他服务器`)
+    await load()
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
 </script>
 
 <template>
@@ -251,6 +262,9 @@ async function doDelete(item) {
             连接
           </el-button>
           <el-button size="small" @click="emit('edit', it)">编辑</el-button>
+          <el-button size="small" @click="doCopy(it)" title="克隆一份相同配置，编辑可改成其他服务器">
+            复制
+          </el-button>
           <el-button type="danger" size="small" plain @click="doDelete(it)">
             删除
           </el-button>

@@ -433,6 +433,26 @@ app.MapPut("/api/connections/{id}", (string id, ConnectRequest req, ConnectionsS
     return Results.Ok(new { message = "已更新", id = updated.Id, name = updated.Name });
 });
 
+// 复制（克隆）已保存的连接：新 Id、名称加"-副本"，凭据/代理一并复制；不发起连接。
+// 刻意不走 host|port|username 去重（Upsert 会撞回原记录）——复制的意义就是同配置多份，
+// 典型用法：复制后编辑改目标主机/端口，快速添加一批同配置的服务器
+app.MapPost("/api/connections/{id}/copy", (string id, ConnectionsStore store, OperationLogger log) =>
+{
+    var prof = store.Get(id);
+    if (prof is null) return Results.NotFound(new { error = "未找到保存的连接" });
+
+    var copy = prof with
+    {
+        Id = Guid.NewGuid().ToString("N"),
+        Name = (prof.Name ?? prof.Host) + "-副本",
+        CreatedAt = DateTime.Now,
+        LastConnectedAt = DateTime.Now,
+    };
+    store.Add(copy);
+    log.Log("info", $"{copy.Username}@{copy.Host}:{copy.Port}", "复制连接", "克隆配置", copy.Name);
+    return Results.Ok(new { id = copy.Id, name = copy.Name, message = "已复制" });
+});
+
 // 删除已保存的连接
 app.MapDelete("/api/connections/{id}", (string id, ConnectionsStore store) =>
 {
@@ -2349,10 +2369,20 @@ public sealed class ConnectionsStore
         lock (_gate) return _profiles.FirstOrDefault(p => p.Id == id);
     }
 
-    // 以 host|port|username 去重；已存在则保留原 Id/CreatedAt 并更新凭据与时间。返回最终保存的 profile
-    public ConnectionProfile Upsert(ConnectionProfile p)
+    // 直接追加（不做 host|port|username 去重）：复制连接这类"同配置多份"场景用
+    public ConnectionProfile Add(ConnectionProfile p)
     {
         lock (_gate)
+        {
+            _profiles.Add(p);
+            Save();
+            return p;
+        }
+    }
+
+    // 以 host|port|username 去重；已存在则保留原 Id/CreatedAt 并更新凭据与时间。返回最终保存的 profile
+    public ConnectionProfile Upsert(ConnectionProfile p)
+    {        lock (_gate)
         {
             var key = $"{p.Host}|{p.Port}|{p.Username}";
             var existing = _profiles.FirstOrDefault(x => $"{x.Host}|{x.Port}|{x.Username}" == key);
