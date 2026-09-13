@@ -17,6 +17,7 @@
 
 ## 杩涘害璁板綍
 
+- 2026-09-13：宏设置加「复制」 —— Terminal.vue 宏管理表格操作列加复制按钮（编辑/复制/删除），copyMacro 本地克隆（newId、名称加"-副本"、同 connKey 同命令）后 saveMacros 持久化；纯前端数据操作，无需后端改动。
 - 2026-09-13：已保存连接加「复制」（克隆） —— 后端 POST /api/connections/{id}/copy：新 Id、名称加"-副本"、凭据/代理一并复制，不走 Upsert 去重（ConnectionsStore 新增 Add 直存方法；host|port|username 相同会撞回原记录，克隆的意义就是同配置多份）；前端 SavedConnections 列表「编辑」旁加复制按钮，成功 toast 并刷新。
 - 2026-09-13：已保存连接加搜索 —— SavedConnections.vue 头部加搜索框（savedSearch/filteredSaved computed，按名称/host/username 不区分大小写过滤，无匹配显示「没有匹配的连接」）；顶栏「已保存连接」下拉菜单顶部也加同款搜索（dd-search 容器 @click.stop 防关菜单，@visible-change 打开时清空，回车 openFirstSaved 连接第一个匹配并 handleClose 收起）。
 - 2026-09-13：已保存连接加「复制IP」按钮 —— SavedConnections.vue 列表按钮区最前加复制IP（拷 item.host，域名同样支持；Clipboard API 不可用退回 textarea+execCommand 兜底），成功 ElMessage.success("已复制：<ip>")，失败 error toast。顶栏「已保存连接」下拉项也加 dd-copy 图标（DocumentCopy，@click.stop 防触发下拉 command 连接；复制后 savedDropdownRef.handleClose() 收起菜单）。

@@ -73,6 +73,25 @@ async function saveMacroForm() {
   }
 }
 
+// 复制宏：克隆一份（名称加"-副本"，同连接同命令），便于快速创建相近的宏
+async function copyMacro(m) {
+  const now = new Date().toISOString()
+  macros.value.push({
+    id: newId(),
+    connKey: m.connKey,
+    name: `${m.name}-副本`,
+    command: m.command,
+    createdAt: now,
+    updatedAt: now,
+  })
+  try {
+    await saveMacros()
+    ElMessage.success(`已复制为「${m.name}-副本」`)
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
 async function removeMacro(m) {
   try {
     await ElMessageBox.confirm(`确定删除宏 “${m.name}”？`, '删除宏', {
@@ -815,9 +834,10 @@ onUnmounted(() => {
             <span class="macro-cmd-cell" :title="row.command">{{ row.command }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="130" align="right">
+        <el-table-column label="操作" width="170" align="right">
           <template #default="{ row }">
             <el-button size="small" text type="primary" @click="startEditMacro(row)">编辑</el-button>
+            <el-button size="small" text type="primary" @click="copyMacro(row)" title="克隆一份相同命令的宏">复制</el-button>
             <el-button size="small" text type="danger" @click="removeMacro(row)">删除</el-button>
           </template>
         </el-table-column>
