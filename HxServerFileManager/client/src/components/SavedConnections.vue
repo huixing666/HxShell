@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, isDesktop, desktopSaveTextFile } from '../api.js'
 import { useSettings } from '../useSettings.js'
@@ -7,6 +7,18 @@ import { useSettings } from '../useSettings.js'
 // 代理标签（follow/custom 时展示，title 悬停可见具体配置）
 const { proxyTagInfo, ensureLoaded } = useSettings()
 ensureLoaded()
+
+// 搜索：按名称 / 主机(IP) / 用户名过滤（不区分大小写）
+const search = ref('')
+const filteredSaved = computed(() => {
+  const kw = search.value.trim().toLowerCase()
+  if (!kw) return items.value
+  return items.value.filter((it) =>
+    (it.name || '').toLowerCase().includes(kw)
+    || (it.host || '').toLowerCase().includes(kw)
+    || (it.username || '').toLowerCase().includes(kw)
+  )
+})
 
 const props = defineProps({
   reloadToken: { type: Number, default: 0 },
@@ -157,6 +169,13 @@ async function doDelete(item) {
     <div class="head">
       <h3 class="title">已保存的连接</h3>
       <div class="head-actions">
+        <el-input
+          v-model="search"
+          size="small"
+          clearable
+          placeholder="搜索名称 / IP / 用户"
+          class="search-input"
+        />
         <el-button size="small" text type="primary" :loading="importing" @click="doExport">
           <el-icon :size="14" style="margin-right: 4px"><Upload /></el-icon>导出
         </el-button>
@@ -189,7 +208,8 @@ async function doDelete(item) {
     />
 
     <ul v-else class="list">
-      <li v-for="it in items" :key="it.id" class="item">
+      <li v-if="filteredSaved.length === 0" class="no-match">没有匹配的连接</li>
+      <li v-for="it in filteredSaved" :key="it.id" class="item">
         <div class="meta">
           <div class="name">
             {{ it.name }}
@@ -255,6 +275,16 @@ async function doDelete(item) {
   margin-left: auto;
   display: flex;
   gap: 4px;
+}
+.search-input {
+  width: 160px;
+  margin-right: 6px;
+}
+.no-match {
+  font-size: 12.5px;
+  color: #8a97a5;
+  text-align: center;
+  padding: 14px 0;
 }
 .mb {
   margin-bottom: 12px;

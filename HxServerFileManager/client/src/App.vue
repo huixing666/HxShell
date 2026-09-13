@@ -45,6 +45,27 @@ const editing = ref(null)
 const editVisible = ref(false)
 const savedDropdownRef = ref(null)
 
+// 下拉搜索：按名称 / 主机(IP) / 用户名过滤；打开菜单时清空，回车连接第一个匹配
+const savedSearch = ref('')
+const filteredSaved = computed(() => {
+  const kw = savedSearch.value.trim().toLowerCase()
+  if (!kw) return savedList.value
+  return savedList.value.filter((c) =>
+    (c.name || '').toLowerCase().includes(kw)
+    || (c.host || '').toLowerCase().includes(kw)
+    || (c.username || '').toLowerCase().includes(kw)
+  )
+})
+function onSavedDropdownVisible(v) {
+  if (v) savedSearch.value = ''
+}
+function openFirstSaved() {
+  const first = filteredSaved.value[0]
+  if (!first) return
+  savedDropdownRef.value?.handleClose?.()
+  openSaved(first)
+}
+
 // 下拉里一键复制 IP（与 SavedConnections.copyIp 同款：Clipboard API 优先，execCommand 兜底）；
 // stopPropagation 挡住下拉的 command（点图标不会触发连接），复制后收起菜单
 async function copyIpFromDropdown(c) {
@@ -745,18 +766,30 @@ async function pollServerCopy() {
         </el-button>
 
         <!-- 已保存连接：连接中也可一键再开一个 -->
-        <el-dropdown ref="savedDropdownRef" trigger="click" @command="onSavedCommand">
+        <el-dropdown ref="savedDropdownRef" trigger="click" @command="onSavedCommand" @visible-change="onSavedDropdownVisible">
           <el-button plain>
             <el-icon style="margin-right: 4px"><Connection /></el-icon>已保存连接
             <el-icon class="el-icon--right"><ArrowDown /></el-icon>
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
+              <div v-if="savedList.length" class="dd-search" @click.stop>
+                <el-input
+                  v-model="savedSearch"
+                  size="small"
+                  clearable
+                  placeholder="搜索名称 / IP / 用户，回车连接第一个"
+                  @keyup.enter="openFirstSaved"
+                />
+              </div>
               <el-dropdown-item v-if="!savedList.length" disabled>
                 暂无已保存的连接
               </el-dropdown-item>
+              <el-dropdown-item v-else-if="filteredSaved.length === 0" disabled>
+                没有匹配的连接
+              </el-dropdown-item>
               <el-dropdown-item
-                v-for="c in savedList"
+                v-for="c in filteredSaved"
                 :key="c.id"
                 :command="'open:' + c.id"
               >
@@ -1164,6 +1197,11 @@ async function pollServerCopy() {
 }
 .dd-copy:hover {
   color: #2d6cdf;
+}
+.dd-search {
+  padding: 6px 8px;
+  border-bottom: 1px solid #eef2f7;
+  cursor: default;
 }
 .tabsbar {
   background: #fff;
