@@ -118,6 +118,29 @@ function doConnect(item) {
   emit('open', item)
 }
 
+// 一键复制 IP（host 可能是域名，一并支持）。Clipboard API 不可用时退回隐藏 textarea + execCommand
+async function copyIp(item) {
+  const ip = item.host || ''
+  if (!ip) return
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(ip)
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = ip
+      ta.style.position = 'fixed'
+      ta.style.top = '-9999px'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    ElMessage.success(`已复制：${ip}`)
+  } catch (e) {
+    ElMessage.error('复制失败：' + (e.message || e))
+  }
+}
+
 async function doDelete(item) {
   if (!confirm(`确定删除已保存的连接 “${item.name}” ?`)) return
   try {
@@ -201,6 +224,9 @@ async function doDelete(item) {
           </div>
         </div>
         <div class="btns">
+          <el-button size="small" @click="copyIp(it)" :title="`复制 ${it.host} 到剪贴板`">
+            复制IP
+          </el-button>
           <el-button type="primary" size="small" @click="doConnect(it)">
             连接
           </el-button>

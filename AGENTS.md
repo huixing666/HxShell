@@ -17,6 +17,7 @@
 
 ## 杩涘害璁板綍
 
+- 2026-09-13：已保存连接加「复制IP」按钮 —— SavedConnections.vue 列表按钮区最前加复制IP（拷 item.host，域名同样支持；Clipboard API 不可用退回 textarea+execCommand 兜底），成功 ElMessage.success("已复制：<ip>")，失败 error toast。顶栏「已保存连接」下拉项也加 dd-copy 图标（DocumentCopy，@click.stop 防触发下拉 command 连接；复制后 savedDropdownRef.handleClose() 收起菜单）。
 - 2026-08-22：VS 发布报"资产文件没有 net10.0/win-x64 的目标"修复 —— 主项目 csproj 加 <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers> + dotnet restore --force。根因：主项目 assets.json 按"无 RID"还原，VS 把还原（解决方案级无 RID）与发布（带 RID，经 ProjectReference SetRuntimeIdentifier 传给主项目）拆成两步，发布阶段找不到 RID 目标；CLI 的 publish -r 一步完成所以从不触发。
 - 2026-08-22：终端「常用命令」下拉菜单（初版做成常驻面板被用户否了，太丑） —— client/src/commandLibrary.js 内置分类命令库（系统/CPU内存/磁盘/网络/下载(wget+curl)/HTTP调试(curl 查看请求响应头与body、POST)/进程服务/文件搜索/压缩/容器，约 65 条）。交互：term-head 的 el-popover（trigger=click，placement=bottom-end，popper-class=cmdpop）：顶部搜索框（弹出自动聚焦，回车执行第一条匹配；按名称/命令/分类名过滤）+ 未搜索时按分类分组列表 / 搜索时平铺（每行带分类小标签）+ 底部说明。点击行为：交互终端 sendInput(cmd+) 执行；含 <占位符>（/<[^>]+>/ 判定，行上橙色 * 标）只发送不回车并 ElMessage 提示；快捷命令模式填入输入框；执行后收起 popover。⚠ popover 内容传送到 body，scoped 样式够不着——用 <style> 非 scoped 块 + cmdpop 前缀类写样式。
 - 2026-08-22：文件编辑器关闭前未保存提示 —— EditorModal 原来点 X/ESC/关闭按钮直接关。加 guardClose(done) 统一守卫：dirty 且非加载中时弹 ElMessageBox 三选一（保存并关闭=distinguishCancelAndClose 的 confirm / 直接关闭=cancel / 取消=close 即 Esc 或 X 掉确认框，留在编辑器）；选保存并关闭时 save 失败（error 置位）不关闭。el-dialog 用 :before-close=guardClose 拦 X 和 ESC（before-close 的 done 才真正关窗），底部关闭按钮走 guardClose(() => emit('close'))。

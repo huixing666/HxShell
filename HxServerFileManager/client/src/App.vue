@@ -43,6 +43,33 @@ const savedReload = ref(0)
 const manageVisible = ref(false)
 const editing = ref(null)
 const editVisible = ref(false)
+const savedDropdownRef = ref(null)
+
+// 下拉里一键复制 IP（与 SavedConnections.copyIp 同款：Clipboard API 优先，execCommand 兜底）；
+// stopPropagation 挡住下拉的 command（点图标不会触发连接），复制后收起菜单
+async function copyIpFromDropdown(c) {
+  const ip = c.host || ''
+  if (!ip) return
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(ip)
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = ip
+      ta.style.position = 'fixed'
+      ta.style.top = '-9999px'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    ElMessage.success(`已复制：${ip}`)
+  } catch (e) {
+    ElMessage.error('复制失败：' + (e.message || e))
+  } finally {
+    savedDropdownRef.value?.handleClose?.()
+  }
+}
 
 // ---- 全局代理（头部「代理设置」弹窗）：连接默认直连，需在连接里选「跟随全局」才使用 ----
 const { proxy: globalProxy, ensureLoaded: ensureSettingsLoaded, saveProxy, proxyTagInfo } = useSettings()
@@ -718,7 +745,7 @@ async function pollServerCopy() {
         </el-button>
 
         <!-- 已保存连接：连接中也可一键再开一个 -->
-        <el-dropdown trigger="click" @command="onSavedCommand">
+        <el-dropdown ref="savedDropdownRef" trigger="click" @command="onSavedCommand">
           <el-button plain>
             <el-icon style="margin-right: 4px"><Connection /></el-icon>已保存连接
             <el-icon class="el-icon--right"><ArrowDown /></el-icon>
@@ -735,6 +762,11 @@ async function pollServerCopy() {
               >
                 <span class="dd-name">{{ c.name }}</span>
                 <span class="dd-sub">{{ c.username }}@{{ c.host }}:{{ c.port }}</span>
+                <el-icon
+                  class="dd-copy"
+                  title="复制 IP"
+                  @click.stop="copyIpFromDropdown(c)"
+                ><DocumentCopy /></el-icon>
                 <el-tag
                   v-if="proxyTagInfo(c)"
                   size="small"
@@ -1123,6 +1155,15 @@ async function pollServerCopy() {
 .dd-proxy {
   margin-left: auto;
   flex-shrink: 0;
+}
+.dd-copy {
+  margin-left: 8px;
+  color: #9aa7b5;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.dd-copy:hover {
+  color: #2d6cdf;
 }
 .tabsbar {
   background: #fff;
