@@ -115,4 +115,16 @@ export const commandCategories = [
       { name: 'Docker 占用', cmd: 'docker system df' },
     ],
   },
+  {
+    name: 'screen',
+    commands: [
+      { name: '列出会话', cmd: 'screen -ls' },
+      { name: '新建会话', cmd: 'screen -S <名称>' },
+      { name: '恢复会话', cmd: 'screen -r <名称>' },
+      { name: '接管会话(踢掉旧连接)', cmd: 'screen -d -r <名称>' },
+      { name: '后台新建并执行命令', cmd: 'screen -dmS <名称> <命令>' },
+      { name: '远程挂起会话', cmd: 'screen -d <名称>' },
+      { name: '杀掉会话', cmd: 'screen -S <名称> -X quit' },
+    ],
+  },
 ]
