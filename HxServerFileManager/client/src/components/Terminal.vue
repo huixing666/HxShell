@@ -164,6 +164,8 @@ const props = defineProps({
   username: { type: String, default: '' }, // 登录用户名：root 时快捷命令提示符用 #（交互终端由 bash 的 \$ 自行展开）
   cwd: { type: String, default: '/' },
   maximized: { type: Boolean, default: false },
+  // 本会话 tab 是否处于激活状态：切回本 tab 时终端自动拿焦点（App.vue 传入）
+  active: { type: Boolean, default: true },
 })
 const emit = defineEmits(['update:cwd', 'toggle-max', 'disconnected'])
 
@@ -652,6 +654,17 @@ defineExpose({ injectCd, reconnect })
 watch(mode, (m) => {
   if (m === 'interactive') nextTick(openInteractive)
   else closeInteractive()
+})
+
+// 切换 tab 回到本会话时终端自动获取焦点（免得还要点一下终端才能输入）：
+// 交互终端 focus xterm；快捷命令模式 focus 命令输入框。
+// nextTick 等 v-show 先把本 tab 显示出来，隐藏元素 focus 无效。
+watch(() => props.active, (on) => {
+  if (!on) return
+  nextTick(() => {
+    if (mode.value === 'interactive') xterm?.focus()
+    else inputRef.value?.focus()
+  })
 })
 
 onMounted(() => {

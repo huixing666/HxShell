@@ -903,6 +903,7 @@ async function pollServerCopy() {
               :username="c.username"
               :cwd="cwdMap[c.connectionId]"
               :maximized="termMax"
+              :active="activeId === c.connectionId"
               @update:cwd="(p) => onCwdChanged(c.connectionId, p)"
               @toggle-max="termMax = !termMax"
               @disconnected="onTermDisconnected(c)"
