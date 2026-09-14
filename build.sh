@@ -35,7 +35,7 @@
 #   HX_FRONTEND=1   发布前先构建前端（需 node/npm）：cd client && npm ci && npm run build
 #
 # 产物布局：
-#   dist/<rid>/            桌面壳（直接双击运行，或拷贝整目录到目标机）
+#   dist/<rid>/            桌面壳（直接双击运行，或拷贝整目录到目标机；win-x64 主程序为 HxShell.exe）
 #   dist/<rid>.zip|.tar.gz 打包产物
 #   dist/HxServerFileManager-<rid>.app            macOS 应用包（osx-arm64 / osx-x64）
 #   dist/HxServerFileManager-macos-<rid>.zip      macOS 应用压缩包
@@ -162,6 +162,18 @@ publish_desktop() {
     -o "$outdir"
   local bin="$outdir/HxServerFileManager.Desktop"
   [[ -f "$bin" ]] && chmod +x "$bin"   # Windows 无执行位，补上便于 tar/zip 传输
+
+  # win-x64：主程序对外分发名改为 HxShell.exe（pdb 同步改名）。
+  # 单文件 exe 重命名不影响运行——ContentRoot/前端页面按可执行文件所在目录解析。
+  if [[ "$rid" == win-x64 ]]; then
+    if [[ -f "$outdir/HxServerFileManager.Desktop.exe" ]]; then
+      mv -f "$outdir/HxServerFileManager.Desktop.exe" "$outdir/HxShell.exe"
+    fi
+    if [[ -f "$outdir/HxServerFileManager.Desktop.pdb" ]]; then
+      mv -f "$outdir/HxServerFileManager.Desktop.pdb" "$outdir/HxShell.pdb"
+    fi
+    echo "  ✔ 已重命名：$outdir/HxShell.exe"
+  fi
 
   # Linux 桌面壳：额外生成 .desktop 启动器（图中双击入口）。
   # Linux 桌面应用不靠双击裸二进制启动（GNOME 会当文本打开/拒绝运行），
