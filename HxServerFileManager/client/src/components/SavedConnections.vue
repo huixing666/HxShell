@@ -130,6 +130,12 @@ function doConnect(item) {
   emit('open', item)
 }
 
+// 双击行 = 连接（免去找按钮）。点到按钮/输入框内的双击不触发
+function onItemDblClick(item, e) {
+  if (e.target.closest('button, .el-button, input, .el-input')) return
+  doConnect(item)
+}
+
 // 一键复制 IP（host 可能是域名，一并支持）。Clipboard API 不可用时退回隐藏 textarea + execCommand
 async function copyIp(item) {
   const ip = item.host || ''
@@ -220,7 +226,13 @@ async function doCopy(item) {
 
     <ul v-else class="list">
       <li v-if="filteredSaved.length === 0" class="no-match">没有匹配的连接</li>
-      <li v-for="it in filteredSaved" :key="it.id" class="item">
+      <li
+        v-for="it in filteredSaved"
+        :key="it.id"
+        class="item"
+        title="双击连接"
+        @dblclick="onItemDblClick(it, $event)"
+      >
         <div class="meta">
           <div class="name">
             {{ it.name }}
@@ -320,6 +332,8 @@ async function doCopy(item) {
   border-radius: 10px;
   background: #fafcff;
   transition: border-color 0.15s, box-shadow 0.15s;
+  cursor: pointer; /* 双击行 = 连接 */
+  user-select: none;
 }
 .item:hover {
   border-color: #c9d6e8;

@@ -384,11 +384,22 @@ onMounted(() => {
   healthTimer = setInterval(checkSessionHealth, HEALTH_INTERVAL)
   window.addEventListener('keydown', onGlobalKeydown)
   ensureSettingsLoaded() // 全局代理等偏好（连接表单里展示「跟随全局（当前配置）」用）
+  // 标签右键菜单：点别处 / 右键别处 / 滚动 / 改变窗口时收起
+  document.addEventListener('click', closeTabMenu)
+  document.addEventListener('contextmenu', closeTabMenu)
+  window.addEventListener('blur', closeTabMenu)
+  window.addEventListener('resize', closeTabMenu)
+  window.addEventListener('scroll', closeTabMenu, true)
 })
 
 onUnmounted(() => {
   if (healthTimer) clearInterval(healthTimer)
   window.removeEventListener('keydown', onGlobalKeydown)
+  document.removeEventListener('click', closeTabMenu)
+  document.removeEventListener('contextmenu', closeTabMenu)
+  window.removeEventListener('blur', closeTabMenu)
+  window.removeEventListener('resize', closeTabMenu)
+  window.removeEventListener('scroll', closeTabMenu, true)
   stopScpPolling()
 })
 
@@ -612,6 +623,52 @@ async function openSaved(p) {
     }
     ElMessage.error(`连接 ${p.name || `${p.username}@${p.host}:${p.port}`} 失败：${e.message}`)
   }
+}
+
+// ---- 标签右键菜单：复制连接（用同配置再开一个标签） ----
+const tabMenu = reactive({ visible: false, x: 0, y: 0, conn: null })
+
+function onTabContext(e, c) {
+  e.preventDefault()
+  e.stopPropagation() // 防止冒泡到 document 的关闭监听把菜单立刻关掉
+  tabMenu.conn = c
+  // 贴边防溢出（菜单约 170x40）
+  tabMenu.x = Math.min(e.clientX, window.innerWidth - 178)
+  tabMenu.y = Math.min(e.clientY, window.innerHeight - 50)
+  tabMenu.visible = true
+}
+function closeTabMenu() {
+  tabMenu.visible = false
+}
+
+// 复制连接：优先用会话自带的 profileId；表单直连（无 profile）时按 host|port|username
+// 找已存凭据（连接成功会自动 upsert 保存，所以通常能找到）；都找不到则提示无法复制
+function duplicateTab(c) {
+  closeTabMenu()
+  if (!c || c.pending) return
+  let profile = null
+  if (c.profileId) {
+    profile =
+      savedList.value.find((s) => s.id === c.profileId) || {
+        id: c.profileId,
+        host: c.host,
+        username: c.username,
+        port: c.port,
+        authType: c.authType,
+        name: c.name,
+        proxyMode: c.proxyMode,
+        proxy: c.proxy,
+      }
+  } else {
+    profile = savedList.value.find(
+      (s) => s.host === c.host && String(s.port) === String(c.port) && s.username === c.username
+    )
+  }
+  if (!profile) {
+    ElMessage.warning('该连接没有保存凭据，无法复制开新标签')
+    return
+  }
+  openSaved(profile)
 }
 
 function onSavedCommand(cmd) {
@@ -843,7 +900,9 @@ async function pollServerCopy() {
         :class="{ active: activeId === c.connectionId, broken: isBroken(c) }"
         role="tab"
         :aria-selected="activeId === c.connectionId"
+        title="左键切换 · 右键复制连接"
         @click="activeId = c.connectionId"
+        @contextmenu="onTabContext($event, c)"
       >
         <el-icon
           v-if="c.pending"
@@ -865,6 +924,20 @@ async function pollServerCopy() {
           title="断开该连接"
           @click.stop="onTabRemove(c.connectionId)"
         ><Close /></el-icon>
+      </div>
+
+      <!-- 标签右键菜单：复制连接（同配置新开一个标签） -->
+      <div
+        v-if="tabMenu.visible"
+        class="tab-menu"
+        :style="{ left: tabMenu.x + 'px', top: tabMenu.y + 'px' }"
+        @click.stop
+        @contextmenu.prevent.stop
+      >
+        <button class="tab-menu-item" @click="duplicateTab(tabMenu.conn)">
+          <el-icon :size="13"><CopyDocument /></el-icon>
+          <span>复制连接</span>
+        </button>
       </div>
     </div>
 
@@ -1260,6 +1333,35 @@ async function pollServerCopy() {
 }
 .sess-tab.broken .t-dot {
   background: #e5484d;
+}
+/* 标签右键菜单（复制连接） */
+.tab-menu {
+  position: fixed;
+  z-index: 3000;
+  min-width: 168px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(31, 45, 61, 0.14);
+}
+.tab-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font-size: 13px;
+  color: #1f2d3d;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab-menu-item:hover {
+  background: #eef3fa;
+  color: #2d6cdf;
 }
 /* 代理迷你徽标：单字（全=跟随全局 / 自=自定义），悬停 title 看完整配置 */
 .t-proxy {
