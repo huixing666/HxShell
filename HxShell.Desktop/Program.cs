@@ -65,7 +65,7 @@ static void ShowWindow(WebApplication app, string url, string? logoPath)
 {
     var window = new PhotinoWindow()
         // 标题带版本号：版本从主项目程序集读取（WebHost.AppVersion），与 HX 独立运行的版本一致
-        .SetTitle("彗星ssh v" + WebHost.AppVersion())
+        .SetTitle("HxShell v" + WebHost.AppVersion())
         .SetUseOsDefaultSize(false)
         .SetSize(1280, 800)
         .Center()

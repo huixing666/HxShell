@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="HxShell.Desktop/HxShell.Desktop.csproj" />
+  <Project Path="HxShell/HxShell.csproj" />
+</Solution>

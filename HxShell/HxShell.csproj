@@ -2,6 +2,10 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <!-- 项目/目录已更名 HxShell，但产物名保持不变（用户侧旧快捷方式/启动脚本不受影响）；
+         csproj 改名后程序集名默认跟随文件名，必须显式固定 -->
+    <AssemblyName>HxServerFileManager</AssemblyName>
+    <RootNamespace>HxServerFileManager</RootNamespace>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

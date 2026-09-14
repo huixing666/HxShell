@@ -18,14 +18,14 @@
 后端默认监听 `15511`（`PORT` 环境变量可覆盖）：
 
 ```bash
-dotnet run --project HxServerFileManager
+dotnet run --project HxShell
 # 浏览器打开 http://localhost:15511
 ```
 
 前端开发模式（HMR，代理到 15511）：
 
 ```bash
-cd HxServerFileManager/client
+cd HxShell/client
 npm install && npm run dev
 ```
 
@@ -51,8 +51,8 @@ export HXSFM_WEB_PASSWORD="your-password"
 ## 项目结构
 
 ```
-HxServerFileManager/           后端（Kestrel + SSH.NET）+ 前端 client/（Vue3 + Vite）
-HxServerFileManager.Desktop/   桌面壳（Photino.NET）
+HxShell/           后端（Kestrel + SSH.NET）+ 前端 client/（Vue3 + Vite）
+HxShell.Desktop/   桌面壳（Photino.NET）
 build.sh / build.bat           跨平台构建脚本
 ```
 

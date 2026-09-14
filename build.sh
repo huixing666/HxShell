@@ -45,8 +45,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-DESKTOP_PROJECT="HxServerFileManager.Desktop/HxServerFileManager.Desktop.csproj"
-SERVER_PROJECT="HxServerFileManager/HxServerFileManager.csproj"
+DESKTOP_PROJECT="HxShell.Desktop/HxShell.Desktop.csproj"
+SERVER_PROJECT="HxShell/HxShell.csproj"
 
 OUT="dist"
 SERVER_RID="linux-x64"

@@ -21,7 +21,7 @@
 # 脚本自动定位：
 #   1) 同级目录的 HxServerFileManager 可执行文件（发布产物直接这样放，./build.sh server 会自动带上本脚本）
 #   2) 仓库内 ./dist/server/linux-x64/HxServerFileManager（./build.sh server 产物）
-#   3) 开发构建 ./HxServerFileManager/bin/Debug/net10.0/HxServerFileManager
+#   3) 开发构建 ./HxShell/bin/Debug/net10.0/HxServerFileManager
 # ============================================================================
 set -euo pipefail
 

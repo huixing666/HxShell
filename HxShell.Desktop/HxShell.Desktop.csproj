@@ -2,6 +2,10 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
+    <!-- 项目/目录已更名 HxShell，但产物名保持不变（用户侧旧快捷方式/启动脚本不受影响）；
+         csproj 改名后程序集名默认跟随文件名，必须显式固定 -->
+    <AssemblyName>HxServerFileManager.Desktop</AssemblyName>
+    <RootNamespace>HxServerFileManager.Desktop</RootNamespace>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -24,7 +28,7 @@
 
   <ItemGroup>
     <!-- 引用主项目，复用 Web 服务构建逻辑。SetRuntimeIdentifier 让主项目与桌面壳用相同 RID 输出 -->
-    <ProjectReference Include="..\HxServerFileManager\HxServerFileManager.csproj" SetRuntimeIdentifier="true" />
+    <ProjectReference Include="..\HxShell\HxShell.csproj" SetRuntimeIdentifier="true" />
   </ItemGroup>
 
   <!-- 窗口图标：logo.png 作为内嵌资源打包（构建产物不落散文件），
@@ -41,7 +45,7 @@
   -->
   <Target Name="CopyWwwrootToDesktopOutput" AfterTargets="Build;Publish">
     <ItemGroup>
-      <WwwrootSource Include="$(MSBuildThisFileDirectory)..\HxServerFileManager\wwwroot\**\*" />
+      <WwwrootSource Include="$(MSBuildThisFileDirectory)..\HxShell\wwwroot\**\*" />
       <WwwrootStale Include="$(OutDir)wwwroot\**\*;$(PublishDir)wwwroot\**\*" />
     </ItemGroup>
     <Delete Files="@(WwwrootStale)" ContinueOnError="true" />
@@ -56,7 +60,7 @@
     桌面壳里看到的还是输出目录里的旧前端。
   -->
   <ItemGroup>
-    <UpToDateCheckInput Include="$(MSBuildThisFileDirectory)..\HxServerFileManager\wwwroot\**\*" Visible="false" />
+    <UpToDateCheckInput Include="$(MSBuildThisFileDirectory)..\HxShell\wwwroot\**\*" Visible="false" />
   </ItemGroup>
 
   <!--
