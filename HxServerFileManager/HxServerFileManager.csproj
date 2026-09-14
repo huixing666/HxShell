@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!-- 应用版本：启动时打印、/api/health 返回；桌面壳标题同步显示（见 WebHost.AppVersion） -->
-    <Version>1.5.0</Version>
+    <Version>1.6.0</Version>
     <!-- 被 Desktop 项目引用时，不要继承 RID 导致 self-contained 冲突（NETSDK1151） -->
     <SelfContained>false</SelfContained>
     <!-- 声明全部发布 RID：还原时为每个 RID 生成资产目标。否则 VS 里带 RID 发布（还原与发布分两步）

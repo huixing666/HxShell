@@ -354,4 +354,9 @@ async function doCopy(item) {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+/* Element Plus 给相邻 el-button 默认加 margin-left:12px，会与 gap 叠加导致间隔过大，归零交给 gap 控制 */
+.btns :deep(.el-button + .el-button),
+.head-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
 </style>
