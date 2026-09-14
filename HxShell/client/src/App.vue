@@ -803,10 +803,6 @@ async function pollServerCopy() {
   <LoginView v-else-if="authRequired && !authed" @authed="onAuthed" />
   <div v-else class="app">
     <header class="topbar">
-      <div class="brand">
-        <el-icon :size="18"><Monitor /></el-icon>
-        <span>HxServerFileManager</span>
-      </div>
       <el-tag
         class="status-tag"
         :type="activeConn ? 'success' : 'info'"
@@ -1220,14 +1216,6 @@ async function pollServerCopy() {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   z-index: 5;
   flex-wrap: wrap;
-}
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 700;
-  font-size: 16px;
-  color: #1f2d3d;
 }
 .status-tag {
   font-size: 13px;

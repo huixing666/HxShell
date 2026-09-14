@@ -53,7 +53,7 @@ async function submit() {
       <div class="login-logo">
         <el-icon :size="30"><Monitor /></el-icon>
       </div>
-      <h1 class="login-title">HxServerFileManager</h1>
+      <h1 class="login-title">HxShell</h1>
       <p class="login-sub">输入访问密码以继续</p>
 
       <el-input
