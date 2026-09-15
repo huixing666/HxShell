@@ -1144,13 +1144,16 @@ function fmtDate(s) {
   margin-bottom: 10px;
 }
 .crumbs {
-  flex: 1;
+  /* 独占一行：flex-basis 100% 让 .tools 换行到下一行，路径不再被按钮挤占遮挡 */
+  flex: 1 1 100%;
   min-width: 0;
   font-size: 13px;
   display: flex;
   align-items: center;
   white-space: nowrap;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px; /* 横向滚动条出现时不贴住文字 */
 }
 .crumb-link {
   color: #2d6cdf;
