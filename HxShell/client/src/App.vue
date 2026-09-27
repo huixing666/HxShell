@@ -92,6 +92,13 @@ async function copyIpFromDropdown(c) {
   }
 }
 
+// 下拉里直接编辑连接（复用「管理已保存连接」的同一个编辑弹窗 openEdit）
+// stopPropagation 挡住下拉 command（点图标不会触发连接），编辑弹窗在 body 层，先收菜单避免遮挡
+function editFromDropdown(c) {
+  savedDropdownRef.value?.handleClose?.()
+  openEdit(c)
+}
+
 // ---- 全局代理（头部「代理设置」弹窗）：连接默认直连，需在连接里选「跟随全局」才使用 ----
 const { proxy: globalProxy, ensureLoaded: ensureSettingsLoaded, saveProxy, proxyTagInfo } = useSettings()
 const proxyDlgVisible = ref(false)
@@ -853,6 +860,11 @@ async function pollServerCopy() {
                   title="复制 IP"
                   @click.stop="copyIpFromDropdown(c)"
                 ><DocumentCopy /></el-icon>
+                <el-icon
+                  class="dd-copy dd-edit"
+                  title="编辑该连接"
+                  @click.stop="editFromDropdown(c)"
+                ><Edit /></el-icon>
                 <el-tag
                   v-if="proxyTagInfo(c)"
                   size="small"
@@ -1259,6 +1271,13 @@ async function pollServerCopy() {
 }
 .dd-copy:hover {
   color: #2d6cdf;
+}
+/* 编辑图标：紧跟复制图标之后（复制右侧的 margin 已撑开间距），hover 用与「管理…」同色系 */
+.dd-edit {
+  margin-left: 6px;
+}
+.dd-edit:hover {
+  color: #e6a23c;
 }
 .dd-search {
   padding: 6px 8px;

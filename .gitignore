@@ -29,6 +29,7 @@ obj
 dist
 .freebuff/
 .workbuddy/
+.workbuddy-ai/
 .vscode
 HxServerFileManager/wwwroot/*
 HxServerFileManager/Data/*
