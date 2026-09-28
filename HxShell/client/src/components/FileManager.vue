@@ -391,7 +391,10 @@ onMounted(() => {
     if (msg?.paths?.length) runDesktopDropUpload(msg.paths)
   })
 })
-watch(() => props.connId, () => load(props.initialDir))
+// connId 变化 = 就地重连（同一实例换新会话 id）：按「当前路径」重新加载，
+// 恢复断开前所在目录，不回退到 initialDir/home（新建/占位连接是全新挂载，
+// 走 onMounted 的 load()，不经过本 watch）。
+watch(() => props.connId, () => load())
 
 // 服务器间直传完成后，App 把目标连接对应的 refreshToken +1，这里收到后重新加载列表
 watch(

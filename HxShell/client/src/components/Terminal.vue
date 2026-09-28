@@ -285,6 +285,7 @@ let ws = null
 let manualClose = false // 主动关闭 ws（切 exec / 卸载 / 重连重建），不触发断开提示
 let initialCdDone = false // 首次打开时按 cwd prop 恢复目录（刷新/重开回到上次路径）
 let oscIgnored = false // 注入恢复路径完成前忽略 OSC 7（防止 shell 初始目录覆盖恢复路径）
+let reconnectCwd = null // 重连时由 reconnect() 捕获：断开前所在目录（null=非重连场景）
 // 挂载时快照初始目录：恢复路径不能被后续 OSC 7 推送覆盖（props.cwd 会随 cwdMap 变化）
 const initialCwd = props.cwd
 
@@ -441,16 +442,23 @@ async function openInteractive() {
     applyFit() // 容器无尺寸时保持默认 80x24
     await api.terminalOpen(props.connId, xterm.cols, xterm.rows)
 
-    // 首次打开时，若 App 给了初始目录（如本地化恢复的路径）且不是根目录，注入一次 cd
-    if (!initialCdDone && initialCwd && initialCwd !== '/') {
-      initialCdDone = true
-      oscIgnored = true // cd 生效前的 OSC 7（shell 初始目录）不推给 App，避免覆盖恢复路径
-      setTimeout(() => {
-        sendInput(`cd ${initialCwd}\r`)
-        setTimeout(() => { oscIgnored = false }, 500) // cd 生效后恢复推送
-      }, 400) // 等 shell 提示符就绪
-    } else if (!initialCdDone) {
-      initialCdDone = true
+    // 首次打开按初始目录恢复；重连（reconnectCwd 非空）按断开前目录恢复。
+    // 重连时 App 已把断开前目录放进 cwdMap[newId]，props.cwd 即目标路径——
+    // 但 props 渲染同步在 nextTick 之后，所以 reconnect() 里也放到 nextTick 再捕获。
+    if (!initialCdDone) {
+      const isReconnect = reconnectCwd !== null
+      const target = isReconnect ? reconnectCwd : initialCwd
+      if (target && (isReconnect || target !== '/')) {
+        initialCdDone = true
+        reconnectCwd = null // 一次性：只服务于本次重连后的首次打开
+        oscIgnored = true // cd 生效前的 OSC 7（shell 初始目录）不推给 App，避免覆盖恢复路径
+        setTimeout(() => {
+          sendInput(`cd ${target}\r`)
+          setTimeout(() => { oscIgnored = false }, 500) // cd 生效后恢复推送
+        }, 400) // 等 shell 提示符就绪
+      } else {
+        initialCdDone = true
+      }
     }
 
     if (!ws) {
@@ -629,7 +637,24 @@ function reconnect() {
   // 关掉旧 ws（可能已 close，再保险一次）；主动关闭，不触发断开提示
   manualClose = true
   if (ws) { try { ws.close() } catch (_) {} ws = null }
-  nextTick(() => openInteractive())
+  xterm?.writeln('\x1b[1;32m--- 已重新连接 ---\x1b[0m')
+  // 重置恢复标记：重连后 shell 回到默认目录，需重新注入 cd 回到断开前路径
+  initialCdDone = false
+  nextTick(() => {
+    // 等 App 对 cwdMap/connectionId 的修改渲染过来后再捕获（cwd prop = 断开前目录）
+    reconnectCwd = props.cwd || null
+    openInteractive()
+  })
+}
+
+// 按 R 后、后端重连请求进行中：终端里即时反馈（此时 WS 还没恢复，只能本地写屏）
+function notifyReconnecting() {
+  xterm?.writeln('\x1b[1;5;33m⟳ 正在重连，请稍候…\x1b[0m')
+}
+
+// 重连失败：终端里写明结果（标签保持红色，可按 R 再试）
+function notifyReconnectFailed() {
+  xterm?.writeln('\x1b[1;5;31m✗ 重连失败，按 R 键再试\x1b[0m')
 }
 
 function closeInteractive() {
@@ -649,7 +674,7 @@ function injectCd(path) {
   sendInput(`cd ${path}\r`)
 }
 
-defineExpose({ injectCd, reconnect })
+defineExpose({ injectCd, reconnect, notifyReconnecting, notifyReconnectFailed })
 
 watch(mode, (m) => {
   if (m === 'interactive') nextTick(openInteractive)

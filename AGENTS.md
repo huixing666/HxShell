@@ -17,6 +17,7 @@
 
 ## 杩涘害璁板綍
 
+- 2026-09-27：按 R 重连加 loading 反馈 + 重连后恢复断开前路径 —— App.vue doReconnect 加 reconnectingUid（isReconnecting）：标签转圈（复用 pending 的 t-loading spinner）+ 文字橙色「xxx 重连中…」，finally 里清除；按下 R 即调 termRefs[oldId].notifyReconnecting() 在终端写「⟳ 正在重连，请稍候…」（此刻 WS 未恢复只能本地写屏），失败时 notifyReconnectFailed() 写「✗ 重连失败，按 R 键再试」。路径恢复：Terminal.vue reconnect() 里重置 initialCdDone=false，nextTick 后（等 App 的 cwdMap[newId]=oldCwd 渲染到 props.cwd）捕获 reconnectCwd，openInteractive 恢复注入 cd；重连场景连 '/' 也注入（首次打开维持原 !== '/' 跳过逻辑），reconnectCwd 用后即清（一次性）。成功时 reconnect() 先写「--- 已重新连接 ---」。**右侧文件管理器同样要恢复**：FileManager.vue 的 `watch(() => props.connId, ...)` 原来 `load(props.initialDir)`（回退 home），就地重连时 connId 换新 id 会把列表冲回家目录——改为 `load()`（保持当前 cwd.value 重新拉取）即恢复断开前目录；新建/占位连接是全新挂载走 onMounted 的 load()，不经过本 watch，不受影响。syncCwd 开时 external-path=cwdMap[newId] 值未变不触发，救不回来，所以必须在 connId watch 里改。
 - 2026-09-13：宏设置加「复制」 —— Terminal.vue 宏管理表格操作列加复制按钮（编辑/复制/删除），copyMacro 本地克隆（newId、名称加"-副本"、同 connKey 同命令）后 saveMacros 持久化；纯前端数据操作，无需后端改动。
 - 2026-09-13：已保存连接加「复制」（克隆） —— 后端 POST /api/connections/{id}/copy：新 Id、名称加"-副本"、凭据/代理一并复制，不走 Upsert 去重（ConnectionsStore 新增 Add 直存方法；host|port|username 相同会撞回原记录，克隆的意义就是同配置多份）；前端 SavedConnections 列表「编辑」旁加复制按钮，成功 toast 并刷新。
 - 2026-09-13：已保存连接加搜索 —— SavedConnections.vue 头部加搜索框（savedSearch/filteredSaved computed，按名称/host/username 不区分大小写过滤，无匹配显示「没有匹配的连接」）；顶栏「已保存连接」下拉菜单顶部也加同款搜索（dd-search 容器 @click.stop 防关菜单，@visible-change 打开时清空，回车 openFirstSaved 连接第一个匹配并 handleClose 收起）。

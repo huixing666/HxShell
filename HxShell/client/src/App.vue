@@ -279,6 +279,7 @@ onMounted(() => {
 // 定期轮询后端会话健康接口，发现某活跃连接断开时把标签标记为断开（文字变红），按 R 只重连当前标签。
 const broken = ref([])             // 已断开、等待处理的连接（元素为 connections 里的对象）
 const reconnectBusy = ref(false)
+const reconnectingUid = ref(null)  // 正在重连的连接 uid：标签上显示 loading
 let healthTimer = null
 const HEALTH_INTERVAL = 15000
 
@@ -291,6 +292,11 @@ function displayName(c) {
 // connectionId 会被原地改掉（见 doReconnect），按 connectionId 匹配会残留红色
 function isBroken(c) {
   return broken.value.some((b) => b.uid === c.uid)
+}
+
+// 该连接是否正在重连（标签栏转圈 + 橙色）
+function isReconnecting(c) {
+  return reconnectingUid.value === c.uid
 }
 
 // 轮询会话健康：仅在「之前正常 -> 现在断开」时新增标记，避免重复
@@ -326,6 +332,9 @@ async function doReconnect(conn) {
   const uid = conn.uid // uid 重连前后不变，broken 里存的是对象引用，按 uid 才能精确清除
   const oldId = conn.connectionId
   const oldCwd = cwdMap[oldId] || conn.homeDirectory || '/'
+  reconnectingUid.value = uid
+  // 即时反馈：标签转圈 + 终端里写「正在重连」（此刻 WS 未恢复，只能本地写屏）
+  termRefs[oldId]?.notifyReconnecting?.()
   try {
     const res = await api.reconnect(conn.profileId)
     const newId = res.connectionId
@@ -361,9 +370,12 @@ async function doReconnect(conn) {
     broken.value = broken.value.filter((b) => b.uid !== uid)
     if (connections.value.some((c) => c.uid === uid) && !broken.value.some((b) => b.uid === uid))
       broken.value.push(conn)
+    // 终端里也写明失败（tab 未删，termRef 还是旧 id）
+    termRefs[oldId]?.notifyReconnectFailed?.()
     ElMessage.error(`重连 ${displayName(conn)} 失败：${e.message}`)
   } finally {
     reconnectBusy.value = false
+    reconnectingUid.value = null
   }
 }
 
@@ -905,21 +917,21 @@ async function pollServerCopy() {
         v-for="c in connections"
         :key="c.connectionId"
         class="sess-tab"
-        :class="{ active: activeId === c.connectionId, broken: isBroken(c) }"
+        :class="{ active: activeId === c.connectionId, broken: isBroken(c), reconnecting: isReconnecting(c) }"
         role="tab"
         :aria-selected="activeId === c.connectionId"
-        title="左键切换 · 右键复制连接"
+        :title="isReconnecting(c) ? '正在重连…' : '左键切换 · 右键复制连接'"
         @click="activeId = c.connectionId"
         @contextmenu="onTabContext($event, c)"
       >
         <el-icon
-          v-if="c.pending"
+          v-if="c.pending || isReconnecting(c)"
           class="t-loading is-loading"
           :size="12"
         ><Loading /></el-icon>
         <span v-else class="t-dot" :class="{ on: activeId === c.connectionId }"></span>
         <span class="t-label" :title="`${c.username}@${c.host}:${c.port}`">
-          {{ c.name || `${c.username}@${c.host}:${c.port}` }}
+          {{ (c.name || `${c.username}@${c.host}:${c.port}`) + (isReconnecting(c) ? ' 重连中…' : '') }}
         </span>
         <span
           v-if="proxyTagInfo(c)"
@@ -1340,6 +1352,11 @@ async function pollServerCopy() {
 }
 .sess-tab.broken .t-dot {
   background: #e5484d;
+}
+/* 重连中：文字转橙（区别于断开的红），loading 转圈复用 pending 的 t-loading */
+.sess-tab.reconnecting .t-label {
+  color: #e6a23c;
+  font-weight: 600;
 }
 /* 标签右键菜单（复制连接） */
 .tab-menu {
