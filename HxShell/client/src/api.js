@@ -212,10 +212,10 @@ export const api = {
   // 读取文本文件内容（在线编辑）。后端已改为原始字节流返回（不经 JSON，避免非 ASCII 转义膨胀），
   // 这里用 fetch 流式读取；onProgress({ loaded, total, percent, chunk }) 可选回调，
   // chunk 为每块的文本增量，编辑器据此边收边显示（cat 式渐进体验）。
-  getFileContent: (connId, path, onProgress) =>
+  getFileContent: (connId, path, onProgress, signal) =>
     fetch(
       `/api/file-content?connId=${encodeURIComponent(connId)}&path=${encodeURIComponent(path)}`,
-      { headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {} }
+      { signal, headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {} }
     )
       .then(async (res) => {
         if (res.status === 401 && getToken()) {
@@ -262,6 +262,10 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ connectionId: connId, path, content }),
     }),
+
+  // 文件属性（编辑器自动刷新轮询：对比 size/mtime 判断远端是否被外部改动）
+  fileStat: (connId, path) =>
+    request(`/api/file-stat?connId=${encodeURIComponent(connId)}&path=${encodeURIComponent(path)}`),
 
   runCommand: (connId, command) =>
     request('/api/command', {

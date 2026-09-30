@@ -22,7 +22,10 @@ const connections = ref([])
 const activeId = ref(null)
 const connectVisible = ref(false)
 const logEnabled = ref(false) // 实时操作日志默认隐藏，顶部按钮可随时开关
-const editor = ref({ open: false, connId: null, path: null })
+// 文件编辑器：一个弹窗多个文件标签（EditorModal 内部管理标签）。
+// keepAlive：弹窗关闭只隐藏不销毁，已打开的文件标签（含未保存状态）保留，
+// 再次打开编辑器接着编辑；登出/清理时整个 editor 对象重置，组件才真正卸载。
+const editor = ref({ open: false, keepAlive: false, connId: null, path: null, seq: 0 })
 
 // ---- 服务器间直传（发送到连接）：选目标连接 + 目标目录 + 进度轮询 ----
 const serverCopyVisible = ref(false)
@@ -499,7 +502,7 @@ function handleConnected(payload, restoreCwd) {
   } else connections.value.push(conn)
   activeId.value = conn.connectionId
   connectVisible.value = false
-  editor.value = { open: false, connId: null, path: null }
+  // 新连接不清理编辑器：其它连接的文件标签及未保存内容仍需保留。
   cwdMap[conn.connectionId] = restoreCwd || conn.homeDirectory || '/'
   loadSaved() // 刷新排序/别名
   persistWorkspace()
@@ -723,10 +726,10 @@ function onSavedOnly(res) {
 }
 
 function openEditor(connId, path) {
-  editor.value = { open: true, connId, path }
+  editor.value = { ...editor.value, open: true, keepAlive: true, connId, path, seq: editor.value.seq + 1 }
 }
 function closeEditor() {
-  editor.value = { open: false, connId: null, path: null }
+  editor.value.open = false // 只隐藏弹窗，文件标签保留（keepAlive）
 }
 
 // ---- 服务器间直传（发送到连接）----
@@ -1121,9 +1124,11 @@ async function pollServerCopy() {
     </el-dialog>
 
     <EditorModal
-      v-if="editor.open"
+      v-if="editor.open || editor.keepAlive"
+      :open="editor.open"
       :conn-id="editor.connId"
       :path="editor.path"
+      :seq="editor.seq"
       @close="closeEditor"
     />
 

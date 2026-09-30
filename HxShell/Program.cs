@@ -140,7 +140,11 @@ app.Lifetime.ApplicationStopping.Register(() =>
 _ = Task.Run(() => mgr.CleanupLoop(shutdownCts.Token));
 
 // 启用 WebSocket 支持（交互终端 /api/terminal/ws 依赖）
-app.UseWebSockets();
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(30),
+    KeepAliveTimeout = TimeSpan.FromSeconds(30),
+});
 
 // ----------------------------------------------------------------------------
 // 登录鉴权（HxSimpleWebAuth）：密码来源优先级： 
@@ -752,6 +756,19 @@ app.MapPut("/api/file-content", (FileContentRequest req, ConnectionManager mgr, 
     catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 
+// 文件属性探测（编辑器「自动刷新」轮询用：对比 size/mtime 判断远端文件是否被外部改动）。
+// 故意不写操作日志：前端每 3 秒轮询一次，写日志会把操作记录刷爆。
+app.MapGet("/api/file-stat", (string connId, string path, ConnectionManager mgr) =>
+{
+    try
+    {
+        var s = mgr.Get(connId);
+        var attr = s.Sftp.GetAttributes(path);
+        return Results.Ok(new { size = attr.Size, mtime = attr.LastWriteTime.ToUniversalTime() });
+    }
+    catch (Exception ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+
 // 执行命令（阻塞至命令结束）。
 // SSH.NET 每次 CreateCommand 都会开新的 exec 通道，cd 等目录状态默认不保留；
 // 这里在会话里记录 cwd，命令包装为 cd <cwd> && <cmd>; rc=$?; pwd; exit $rc，
@@ -941,6 +958,14 @@ app.MapGet("/api/terminal/ws", async (string connId, HttpContext ctx, Connection
     // 否则主循环会一直阻塞在 ReceiveAsync 上，ws 不关，停机也会被这个请求拖住。
     using var linked = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, shutdownCts.Token);
 
+    // 会话存活续命：终端 WS 挂着 = 该连接正在使用，定时 Touch 防 30 分钟空闲回收误杀。
+    // WS 长连接只在建立时 Get() Touch 过一次，之后输入输出都不经过 mgr.Get——不活跃的 tab
+    // 没有任何 API 调用续命，30 分钟后被 CleanupLoop 回收，表现为「未激活的 tab 过段时间掉线」。
+    // WS 结束（关标签/关浏览器/断线）时定时器随之释放，被遗忘的连接恢复正常的空闲回收兜底。
+    using var touchTimer = new Timer(
+        _ => s.Touch(),
+        null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+
     // 输出转发任务：shell 输出 channel → WebSocket
     var pump = Task.Run(async () =>
     {
@@ -960,7 +985,8 @@ app.MapGet("/api/terminal/ws", async (string connId, HttpContext ctx, Connection
             // channel 正常完成 = shell 已被回收（SSH 断开或主动关闭）：告知前端
             try
             {
-                await SendWsJsonAsync(ws, new { type = "closed", reason = "SSH 连接已断开" }, CancellationToken.None);
+                using var notifyCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await SendWsJsonAsync(ws, new { type = "closed", reason = "SSH 连接已断开" }, notifyCts.Token);
             }
             catch { /* ws 可能已不可写 */ }
         }
@@ -1001,6 +1027,7 @@ app.MapGet("/api/terminal/ws", async (string connId, HttpContext ctx, Connection
                         {
                             s.Shell.Write(dataEl.GetString() ?? "");
                             s.Shell.Flush();
+                            s.Touch(); // 打字也算活跃（防空闲回收；WS 常驻定时 Touch 之外的精确补充）
                         }
                         else if (t == "resize"
                                  && doc.RootElement.TryGetProperty("cols", out var colsEl)
@@ -1022,11 +1049,16 @@ app.MapGet("/api/terminal/ws", async (string connId, HttpContext ctx, Connection
     catch (OperationCanceledException) { }
     catch (WebSocketException) { }
 
-    // 主循环结束（客户端发 Close 帧 / 出错 / shell 已死）：无论哪种，都要取消转发任务，
-    // 否则它会一直挂在 ReadAllAsync 上，这个请求也就永远 await 不完。
-    try { linked.Cancel(); } catch { }
-    try { await pump; } catch { }
-    try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", CancellationToken.None); } catch { }
+    finally
+    {
+        // 先停止续期，再收尾；即使对端不回应关闭握手，也不能继续保活会话。
+        await touchTimer.DisposeAsync();
+        try { linked.Cancel(); } catch { }
+        try { await pump; } catch { }
+        using var closeCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "bye", closeCts.Token); }
+        catch { ws.Abort(); }
+    }
 
     return Results.Empty;
 });
