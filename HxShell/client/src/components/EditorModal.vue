@@ -8,6 +8,8 @@ import { api } from '../api.js'
 // 弹窗关闭只隐藏（open=false），标签继续保留，下次打开接着编辑；只有 App 真正卸载
 // 组件（登出/断开清理）时才销毁全部实例。
 const props = defineProps({
+  connectionUid: String, // SSH 标签稳定身份，重连后保持不变
+  connections: { type: Array, default: () => [] },
   connId: String, // 新开标签所属连接（App 每次 openEditor 传入，各标签记住自己的）
   path: String,   // 新开的文件路径
   seq: Number,    // openEditor 计数，驱动 watch 新开标签（同文件已开则只切换）
@@ -34,6 +36,7 @@ async function ensureEditor(t) {
   // 编辑器走动态 import：不打开这个弹窗就不会下载 CodeMirror 那个 chunk
   const { createEditor } = await import('../cmEditor.js')
   if (!tabs.value.includes(t)) return null
+  if (cms.get(t.key)) return cms.get(t.key) // import 期间可能由新读取创建了实例
   const host = hostEls[t.key]
   if (!host) return null // 等 import 的间隙里标签被关了
   const cm = createEditor({
@@ -49,22 +52,26 @@ async function ensureEditor(t) {
 
 // 记录 size/mtime 基线：自动刷新用它对比「加载/保存之后」文件是否又被外部改动
 async function refreshBaseline(t) {
+  const connId = t.connId
   try {
-    const st = await api.fileStat(t.connId, t.path)
+    const st = await api.fileStat(connId, t.path)
+    if (!tabs.value.includes(t) || t.connId !== connId) return
     t.statReady = true
     t.statSize = st.size
     t.statMtime = st.mtime
-  } catch (_) { t.statReady = false /* 文件可能刚被删，静默 */ }
+  } catch (_) { if (t.connId === connId) t.statReady = false /* 文件可能刚被删，静默 */ }
 }
 
 async function loadTab(t) {
   if (!tabs.value.includes(t) || t.saving) return
   loadControllers.get(t.key)?.abort()
+  const connId = t.connId
   const controller = new AbortController()
   loadControllers.set(t.key, controller)
-  const isCurrent = () => tabs.value.includes(t) && loadControllers.get(t.key) === controller
+  const isCurrent = () => tabs.value.includes(t) && t.connId === connId && loadControllers.get(t.key) === controller
   paintBufs.delete(t.key)
   t.loading = true
+  t.loaded = false
   t.error = ''
   t.saved = false
   t.dirty = false
@@ -77,7 +84,7 @@ async function loadTab(t) {
     ed.setDoc('')
     ed.setReadOnly(true)
     ed.setLanguage(t.path)
-    const res = await api.getFileContent(t.connId, t.path, ({ loaded, total, percent, chunk }) => {
+    const res = await api.getFileContent(connId, t.path, ({ loaded, total, percent, chunk }) => {
       if (!isCurrent()) return
       t.progress = percent
       const mb = (n) => (n / 1024 / 1024).toFixed(1)
@@ -88,6 +95,7 @@ async function loadTab(t) {
     }, controller.signal)
     if (!isCurrent()) return
     ed.setDoc(res.content)
+    t.loaded = true
     t.lines = ed.lines()
     await refreshBaseline(t)
   } catch (e) {
@@ -124,33 +132,50 @@ function pendingAppend(t, chunk) {
 
 async function saveTab(t) {
   const ed = cms.get(t.key)
-  if (!ed || t.loading || t.saving) return
+  if (!tabs.value.includes(t) || !ed || !t.loaded || t.loading || t.saving) return false
+  const connId = t.connId
+  const content = ed.getDoc()
   t.saving = true
   t.error = ''
   t.saved = false
   try {
-    await api.saveFileContent(t.connId, t.path, ed.getDoc())
-    t.saved = true
-    t.dirty = false
+    await api.saveFileContent(connId, t.path, content)
+    if (t.connId !== connId) {
+      t.error = '连接已重连，请重新保存'
+      return false
+    }
+    await refreshBaseline(t)
+    if (t.connId !== connId) {
+      t.error = '连接已重连，请重新保存'
+      return false
+    }
+    // 保存期间仍可编辑；只有当前文档与已提交内容一致，才允许退出。
+    t.dirty = ed.getDoc() !== content
+    t.saved = !t.dirty
     t.changedRemote = false
-    await refreshBaseline(t) // 自己的保存不算「外部修改」，重记基线
     ElMessage.success(`已保存 ${fname(t.path)}`)
+    return !t.dirty
   } catch (e) {
-    t.error = e.message
+    t.error = t.connId === connId ? e.message : '连接已重连，请重新保存'
+    return false
   } finally {
     t.saving = false
   }
 }
 
+async function saveAndExit(t) {
+  if (await saveTab(t)) removeTab(t)
+}
+
 // ---- 标签管理 ----
 
-function addTab(connId, path) {
+function addTab(connId, path, connectionUid = props.connectionUid) {
   if (!path) return
-  const key = `${connId}::${path}`
+  const key = `${connectionUid || connId}::${path}`
   const existed = tabs.value.find((x) => x.key === key)
   if (existed) { activeKey.value = key; return } // 已开着：只切换，不重复开
   const t = reactive({
-    key, connId, path,
+    key, connId, path, connectionUid, loaded: false,
     loading: false, saving: false, error: '', saved: false, dirty: false,
     wrap: false, lines: 0,
     autoRefresh: false, changedRemote: false,
@@ -163,24 +188,26 @@ function addTab(connId, path) {
   nextTick(() => loadTab(t))
 }
 
-function closeTab(t) {
-  const doClose = () => {
-    if (!tabs.value.includes(t)) return
-    loadControllers.get(t.key)?.abort()
-    loadControllers.delete(t.key)
-    cms.get(t.key)?.destroy()
-    cms.delete(t.key)
-    paintBufs.delete(t.key)
-    delete hostEls[t.key]
-    const i = tabs.value.indexOf(t)
-    tabs.value.splice(i, 1)
-    if (activeKey.value === t.key) {
-      const next = tabs.value[Math.min(i, tabs.value.length - 1)]
-      activeKey.value = next ? next.key : null
-    }
-    if (!tabs.value.length) emit('close') // 最后一个标签关掉 = 关弹窗
+function removeTab(t) {
+  if (!tabs.value.includes(t)) return
+  loadControllers.get(t.key)?.abort()
+  loadControllers.delete(t.key)
+  cms.get(t.key)?.destroy()
+  cms.delete(t.key)
+  paintBufs.delete(t.key)
+  delete hostEls[t.key]
+  const i = tabs.value.indexOf(t)
+  tabs.value.splice(i, 1)
+  if (activeKey.value === t.key) {
+    const next = tabs.value[Math.min(i, tabs.value.length - 1)]
+    activeKey.value = next ? next.key : null
   }
-  if (!t.dirty || t.loading) { doClose(); return }
+  if (!tabs.value.length) emit('close')
+}
+
+function closeTab(t) {
+  if (t.saving) return
+  if (!t.dirty || t.loading) { removeTab(t); return }
   ElMessageBox.confirm(`「${fname(t.path)}」有未保存的修改，直接关闭将丢失这些改动。`, '未保存的修改', {
     confirmButtonText: '保存并关闭',
     cancelButtonText: '直接关闭',
@@ -188,17 +215,17 @@ function closeTab(t) {
     type: 'warning',
   })
     .then(async () => {
-      await saveTab(t)
-      if (!t.error) doClose() // 保存失败留在编辑器里处理错误
+      if (await saveTab(t)) removeTab(t) // 保存失败或有新修改时保留文件
     })
     .catch((action) => {
-      if (action === 'cancel') doClose() // 「直接关闭」；close（Esc/X）= 取消，留在编辑器
+      if (action === 'cancel') removeTab(t) // 「直接关闭」；close（Esc/X）= 取消，留在编辑器
     })
 }
 
 // 弹窗关闭守卫：任一标签有未保存修改时先询问。「保存并关闭」会依次保存全部脏标签，
 // 任一保存失败（error 置位）不关闭；Esc / X 掉确认框留在编辑器。
 function guardClose(done) {
+  if (tabs.value.some((t) => t.saving)) return
   const dirtyTabs = tabs.value.filter((t) => t.dirty && !t.loading)
   if (!dirtyTabs.length) { done(); return }
   const label = dirtyTabs.length === 1 ? `「${fname(dirtyTabs[0].path)}」` : `${dirtyTabs.length} 个文件`
@@ -209,8 +236,8 @@ function guardClose(done) {
     type: 'warning',
   })
     .then(async () => {
-      for (const t of dirtyTabs) await saveTab(t)
-      if (!dirtyTabs.some((t) => t.error)) done()
+      for (const t of dirtyTabs) if (!await saveTab(t)) return
+      if (!tabs.value.some((t) => t.dirty)) done()
     })
     .catch((action) => {
       if (action === 'cancel') done()
@@ -225,10 +252,11 @@ async function pollTick() {
   if (!props.open) return // 弹窗隐藏时不轮询
   for (const t of tabs.value) {
     if (!t.autoRefresh || !t.statReady || t.loading || t.saving || t.polling) continue
+    const connId = t.connId
     t.polling = true
     try {
-      const st = await api.fileStat(t.connId, t.path)
-      if (!tabs.value.includes(t) || !props.open || !t.autoRefresh || t.loading || t.saving) continue
+      const st = await api.fileStat(connId, t.path)
+      if (t.connId !== connId || !tabs.value.includes(t) || !props.open || !t.autoRefresh || t.loading || t.saving) continue
       if (st.size !== t.statSize || st.mtime !== t.statMtime) {
         if (!t.dirty) {
           await loadTab(t) // 无本地改动：直接重读（loadTab 会重记基线）
@@ -258,6 +286,22 @@ watch(() => activeTab.value?.wrap, (v, old) => {
   if (!t || !cms.get(t.key)) return
   if (v !== old) cms.get(t.key).setWrap(v)
 })
+
+// SSH 标签的 uid 不随重连变化；只更新请求连接，不改文件 key/编辑器实例。
+watch(() => props.connections.map((c) => [c.uid, c.connectionId]), () => {
+  for (const t of tabs.value) {
+    const conn = props.connections.find((c) => c.uid === t.connectionUid)
+    if (!conn || conn.connectionId === t.connId) continue
+    const resumeLoad = t.loading || (!t.loaded && !!t.error)
+    loadControllers.get(t.key)?.abort()
+    loadControllers.delete(t.key)
+    paintBufs.delete(t.key)
+    t.connId = conn.connectionId
+    t.loading = false
+    t.error = ''
+    if (resumeLoad && !t.dirty) nextTick(() => loadTab(t))
+  }
+}, { flush: 'sync' })
 
 // App 的 openEditor 计数变化 = 请求新开（或切换到）一个文件
 watch(() => props.seq, () => addTab(props.connId, props.path))
@@ -360,9 +404,12 @@ onBeforeUnmount(() => {
           <span class="hint">{{ activeTab.lines }} 行 · Ctrl+F 查找 · Alt+G 跳转行 · Ctrl+S 保存</span>
         </div>
         <div class="foot-right">
-          <el-button @click="guardClose(() => emit('close'))">关闭</el-button>
-          <el-button type="primary" :loading="activeTab.saving" :disabled="activeTab.loading" @click="saveTab(activeTab)">
+          <el-button :disabled="activeTab.saving" @click="guardClose(() => emit('close'))">关闭</el-button>
+          <el-button type="primary" :loading="activeTab.saving" :disabled="!activeTab.loaded || activeTab.loading" @click="saveTab(activeTab)">
             {{ activeTab.saving ? '保存中…' : '保存 (Ctrl+S)' }}
+          </el-button>
+          <el-button type="primary" plain :disabled="!activeTab.loaded || activeTab.loading || activeTab.saving" @click="saveAndExit(activeTab)">
+            保存并退出
           </el-button>
         </div>
       </div>
@@ -505,5 +552,27 @@ onBeforeUnmount(() => {
 }
 .foot-right {
   flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .foot-left {
+    flex-wrap: wrap;
+  }
+  .hint {
+    flex-basis: 100%;
+  }
+  .foot-right {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .foot-right :deep(.el-button + .el-button) {
+    margin-left: 0;
+  }
 }
 </style>

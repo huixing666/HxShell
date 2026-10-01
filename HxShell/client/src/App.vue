@@ -25,7 +25,7 @@ const logEnabled = ref(false) // 实时操作日志默认隐藏，顶部按钮�
 // 文件编辑器：一个弹窗多个文件标签（EditorModal 内部管理标签）。
 // keepAlive：弹窗关闭只隐藏不销毁，已打开的文件标签（含未保存状态）保留，
 // 再次打开编辑器接着编辑；登出/清理时整个 editor 对象重置，组件才真正卸载。
-const editor = ref({ open: false, keepAlive: false, connId: null, path: null, seq: 0 })
+const editor = ref({ open: false, keepAlive: false, connectionUid: null, connId: null, path: null, seq: 0 })
 
 // ---- 服务器间直传（发送到连接）：选目标连接 + 目标目录 + 进度轮询 ----
 const serverCopyVisible = ref(false)
@@ -281,8 +281,7 @@ onMounted(() => {
 // ---- SSH 连接断开检测 ----
 // 定期轮询后端会话健康接口，发现某活跃连接断开时把标签标记为断开（文字变红），按 R 只重连当前标签。
 const broken = ref([])             // 已断开、等待处理的连接（元素为 connections 里的对象）
-const reconnectBusy = ref(false)
-const reconnectingUid = ref(null)  // 正在重连的连接 uid：标签上显示 loading
+const reconnectingUids = reactive(new Set()) // 正在重连的连接 uid（多个 tab 可并发重连）：标签上显示 loading
 let healthTimer = null
 const HEALTH_INTERVAL = 15000
 
@@ -292,14 +291,14 @@ function displayName(c) {
 
 // 该连接是否处于断开待重连状态（标签栏文字变红）
 // 注意：必须按 uid 匹配——broken 里存的是 connections 的对象引用，重连时
-// connectionId 会被原地改掉（见 doReconnect），按 connectionId 匹配会残留红色
+// connectionId 会被原地改掉（见 reconnectOne），按 connectionId 匹配会残留红色
 function isBroken(c) {
   return broken.value.some((b) => b.uid === c.uid)
 }
 
 // 该连接是否正在重连（标签栏转圈 + 橙色）
 function isReconnecting(c) {
-  return reconnectingUid.value === c.uid
+  return reconnectingUids.has(c.uid)
 }
 
 // 轮询会话健康：仅在「之前正常 -> 现在断开」时新增标记，避免重复
@@ -324,18 +323,19 @@ async function checkSessionHealth() {
   broken.value = broken.value.filter((b) => connections.value.some((c) => c.uid === b.uid))
 }
 
-// 重连一个断开连接（走已保存的 profileId；无 profile 的只能提示手动重连）
-async function doReconnect(conn) {
-  if (reconnectBusy.value) return
+// 重连单个连接（走已保存的 profileId；无 profile 的只能提示手动重连）。
+// 重连单个连接（走已保存的 profileId；无 profile 的只能提示手动重连）。
+// 每个 tab 的重连互相独立、可并发：没有全局锁，第一个没连完不影响第二个按 R。
+async function reconnectOne(conn) {
+  if (reconnectingUids.has(conn.uid)) return // 该 tab 的重连已在进行中，忽略重复触发
   if (!conn.profileId) {
     ElMessage.warning(`${displayName(conn)} 未保存为常用连接，无法自动重连，请手动重新连接`)
     return
   }
-  reconnectBusy.value = true
   const uid = conn.uid // uid 重连前后不变，broken 里存的是对象引用，按 uid 才能精确清除
   const oldId = conn.connectionId
   const oldCwd = cwdMap[oldId] || conn.homeDirectory || '/'
-  reconnectingUid.value = uid
+  reconnectingUids.add(uid)
   // 即时反馈：标签转圈 + 终端里写「正在重连」（此刻 WS 未恢复，只能本地写屏）
   termRefs[oldId]?.notifyReconnecting?.()
   try {
@@ -377,8 +377,7 @@ async function doReconnect(conn) {
     termRefs[oldId]?.notifyReconnectFailed?.()
     ElMessage.error(`重连 ${displayName(conn)} 失败：${e.message}`)
   } finally {
-    reconnectBusy.value = false
-    reconnectingUid.value = null
+    reconnectingUids.delete(uid)
   }
 }
 
@@ -390,16 +389,21 @@ function onTermDisconnected(conn) {
   broken.value.push(conn)
 }
 
-// 键盘：R 只重连当前激活的标签（若它已断开）；不再全量重连
+// 键盘：R 重连当前激活的 tab（若已断开）。只作用于眼前的 tab，不牵连别的；
+// 多个 tab 掉线时逐个切换按 R 即可，且各 tab 的重连并发互不阻塞（第一个没连完也能按第二个）。
+// 输入框/编辑器里打字不触发（xterm 的 helper textarea 除外——终端里按 R 正是重连入口）。
 function onGlobalKeydown(e) {
   const k = e.key.toLowerCase()
-  if (k === 'r' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    const cur = connections.value.find((c) => c.connectionId === activeId.value)
-    if (cur && broken.value.some((b) => b.uid === cur.uid)) {
-      e.preventDefault()
-      doReconnect(cur)
-    }
-  }
+  if (k !== 'r' || e.ctrlKey || e.metaKey || e.altKey) return
+  const cur = connections.value.find((c) => c.connectionId === activeId.value)
+  if (!cur || !broken.value.some((b) => b.uid === cur.uid)) return
+  const t = e.target
+  const inXterm = t?.classList?.contains('xterm-helper-textarea')
+  const inEditor = t && !inXterm
+    && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+  if (inEditor) return // 正在打字，不误触
+  e.preventDefault()
+  reconnectOne(cur)
 }
 
 onMounted(() => {
@@ -726,7 +730,8 @@ function onSavedOnly(res) {
 }
 
 function openEditor(connId, path) {
-  editor.value = { ...editor.value, open: true, keepAlive: true, connId, path, seq: editor.value.seq + 1 }
+  const connectionUid = connections.value.find((c) => c.connectionId === connId)?.uid || connId
+  editor.value = { ...editor.value, open: true, keepAlive: true, connectionUid, connId, path, seq: editor.value.seq + 1 }
 }
 function closeEditor() {
   editor.value.open = false // 只隐藏弹窗，文件标签保留（keepAlive）
@@ -1126,6 +1131,8 @@ async function pollServerCopy() {
     <EditorModal
       v-if="editor.open || editor.keepAlive"
       :open="editor.open"
+      :connection-uid="editor.connectionUid"
+      :connections="connections"
       :conn-id="editor.connId"
       :path="editor.path"
       :seq="editor.seq"
