@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api, getToken, isDesktop, desktopDownloadFile, desktopDownloadMany, desktopUploadDropped, onDesktopEvent } from '../api.js'
+import { buildCopyCommand, pathsForCopy } from '../copyCommand.js'
 import { useSettings } from '../useSettings.js'
 
 // 常用目录收藏（后端 Data/settings.json）：按连接隔离，跳转/添加/管理
@@ -128,6 +129,9 @@ async function removeFav(f) {
 const props = defineProps({
   connId: String,
   connKey: { type: String, default: '' }, // 连接稳定标识（profileId 或 host@user:port），收藏按此隔离
+  host: { type: String, default: '' }, // 当前连接主机，rsync 命令里的来源
+  port: { type: [Number, String], default: 22 },
+  username: { type: String, default: '' },
   initialDir: { type: String, default: '/' },
   syncCwd: { type: Boolean, default: true },
   externalPath: { type: String, default: null }, // 终端推送的目录（syncCwd 开启时跟随）
@@ -194,8 +198,8 @@ function onRowContextMenu(row, _col, event) {
     lastSelected = row
   }
   menuRow.value = row
-  menuX.value = Math.min(event.clientX, window.innerWidth - 150)
-  menuY.value = Math.min(event.clientY, window.innerHeight - 200)
+  menuX.value = Math.min(event.clientX, window.innerWidth - 210)
+  menuY.value = Math.min(event.clientY, window.innerHeight - 240)
   menuVisible.value = true
 }
 function closeMenu() {
@@ -218,6 +222,12 @@ function menuDownload() {
     return
   }
   download(row)
+}
+function menuCopyCommand() {
+  // 先取路径再关菜单：closeMenu 会清掉 menuRow
+  const paths = pathsForCopy(selectedItems.value.map((i) => i.fullPath), menuRow.value?.fullPath)
+  closeMenu()
+  copyPathsCommand(paths)
 }
 function menuRename() {
   const row = menuRow.value
@@ -282,18 +292,98 @@ function onRowClick(row, _col, event) {
   }
 }
 
-// 「操作」下拉：新建目录 / 上传 / 发送到连接 / 批量删除
+// 「操作」下拉：新建目录 / 上传 / 下载 / 复制命令 / 发送到连接 / 批量删除
 function onToolCommand(cmd) {
   if (cmd === 'mkdir') newDirVisible.value = true
   else if (cmd === 'upload') triggerUpload()
   else if (cmd === 'download') downloadSelected()
+  else if (cmd === 'copy-cmd') copyPathsCommand(selectedItems.value.map((i) => i.fullPath))
   else if (cmd === 'send') {
     emit('send-to-connection', selectedItems.value.map((i) => i.fullPath))
   } else if (cmd === 'delete') batchDelete()
 }
 
+// 复制到剪贴板：优先 Clipboard API，失败退回隐藏 textarea + execCommand（与终端选中复制同款）
+async function copyToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch (_) { /* 非安全上下文或被策略拦住，走兜底 */ }
+  }
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'fixed'
+    ta.style.top = '-9999px'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    ta.setSelectionRange(0, text.length)
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    return ok
+  } catch (_) {
+    return false
+  }
+}
+
+// 剪贴板写失败时把命令摊开，方便手动复制
+const copyCmdVisible = ref(false)
+const copyCmdText = ref('')
+
+// 生成 rsync 拉取命令并写入剪贴板。到目标服务器的目录里粘贴回车，从当前连接拉文件。
+async function copyPathsCommand(paths) {
+  const usable = (paths || []).filter((p) => p != null && String(p).trim() !== '')
+  if (!usable.length) {
+    ElMessage.warning('请先选中要复制的文件')
+    return
+  }
+  const cmd = buildCopyCommand(usable, {
+    username: props.username,
+    host: props.host,
+    port: props.port,
+  })
+  if (!cmd) {
+    ElMessage.warning('当前连接缺少主机或用户名，无法生成 rsync 命令')
+    return
+  }
+  const ok = await copyToClipboard(cmd)
+  const n = usable.length
+  if (!ok) {
+    copyCmdText.value = cmd
+    copyCmdVisible.value = true
+    return
+  }
+  const portNum = Number(props.port)
+  const port = Number.isInteger(portNum) && portNum >= 1 && portNum <= 65535 ? portNum : 22
+  const who = `${String(props.username).trim()}@${String(props.host).trim()}:${port}`
+  const hint = `到目标服务器的目录里粘贴回车，会从 ${who} 拉过来`
+  ElMessage.success({
+    message: cmd.length <= 280 ? `已复制：${cmd}。${hint}` : `已复制 ${n} 项的 rsync 命令。${hint}`,
+    duration: 5000,
+    showClose: true,
+  })
+}
+async function retryCopyCmd() {
+  const ok = await copyToClipboard(copyCmdText.value)
+  if (!ok) {
+    ElMessage.error('复制失败，请在文本框里手动全选复制')
+    return
+  }
+  copyCmdVisible.value = false
+  ElMessage.success('已复制 rsync 命令，到目标服务器的目录里粘贴回车即可')
+}
+
 // 当前选中项（来自当前目录列表）
 const selectedItems = computed(() => items.value.filter((i) => selectedSet.value.has(i.fullPath)))
+// 右键「复制命令」覆盖的项数：多选中的一员 → 整个选中集，否则这一行
+const menuCopyCount = computed(() => {
+  const row = menuRow.value
+  if (!row) return 0
+  return pathsForCopy(selectedItems.value.map((i) => i.fullPath), row.fullPath).length
+})
 
 async function batchDelete() {
   const sel = selectedItems.value
@@ -900,6 +990,14 @@ function fmtDate(s) {
                 <span v-if="selectedItems.length" class="dd-count">{{ selectedItems.length }}</span>
               </el-dropdown-item>
               <el-dropdown-item
+                command="copy-cmd"
+                :disabled="selectedItems.length === 0"
+                title="生成 rsync 命令并复制。到目标服务器的目录粘贴回车，会从这台机器拉文件"
+              >
+                <el-icon style="margin-right: 6px"><DocumentCopy /></el-icon>复制命令
+                <span v-if="selectedItems.length" class="dd-count">{{ selectedItems.length }}</span>
+              </el-dropdown-item>
+              <el-dropdown-item
                 command="send"
                 :disabled="selectedItems.length === 0 || !hasOtherConns"
                 :title="!hasOtherConns ? '需要同时打开至少两个连接' : ''"
@@ -987,7 +1085,7 @@ function fmtDate(s) {
       </div>
     </div>
 
-    <!-- 行右键菜单：编辑/下载/重命名/删除 -->
+    <!-- 行右键菜单：编辑/下载/复制命令/重命名/删除 -->
     <div
       v-show="menuVisible"
       class="ctx-menu"
@@ -1000,6 +1098,13 @@ function fmtDate(s) {
       <div class="ctx-item" @click="menuDownload">
         <el-icon :size="14"><Download /></el-icon>下载
       </div>
+      <div
+        class="ctx-item"
+        title="生成 rsync 命令并复制。到目标服务器的目录粘贴回车，会从这台机器拉文件"
+        @click="menuCopyCommand"
+      >
+        <el-icon :size="14"><DocumentCopy /></el-icon>复制命令{{ menuCopyCount > 1 ? `（${menuCopyCount}）` : '' }}
+      </div>
       <div class="ctx-item" @click="menuRename">
         <el-icon :size="14"><Edit /></el-icon>重命名
       </div>
@@ -1007,6 +1112,21 @@ function fmtDate(s) {
         <el-icon :size="14"><Delete /></el-icon>删除
       </div>
     </div>
+
+    <!-- 剪贴板不可用时，把生成的 rsync 命令摊开供手动复制 -->
+    <el-dialog
+      v-model="copyCmdVisible"
+      title="复制命令"
+      width="min(560px, 92vw)"
+      :close-on-click-modal="false"
+    >
+      <p class="copy-cmd-hint">剪贴板写入失败。到目标服务器的目录里粘贴下面的命令并回车，会从这台机器把文件拉过去。</p>
+      <el-input v-model="copyCmdText" type="textarea" :rows="5" readonly />
+      <template #footer>
+        <el-button @click="copyCmdVisible = false">关闭</el-button>
+        <el-button type="primary" @click="retryCopyCmd">复制</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 新建目录 -->
     <el-dialog
@@ -1353,5 +1473,11 @@ function fmtDate(s) {
 }
 .ctx-item.danger:hover .el-icon {
   color: #c0392b;
+}
+.copy-cmd-hint {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #6b7785;
 }
 </style>

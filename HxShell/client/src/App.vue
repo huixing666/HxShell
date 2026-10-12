@@ -1019,6 +1019,9 @@ async function pollServerCopy() {
             <FileManager
               :conn-id="c.connectionId"
               :conn-key="connKeyOf(c)"
+              :host="c.host"
+              :port="c.port"
+              :username="c.username"
               :initial-dir="c.homeDirectory"
               :sync-cwd="syncCwd"
               :external-path="syncCwd ? cwdMap[c.connectionId] : null"
