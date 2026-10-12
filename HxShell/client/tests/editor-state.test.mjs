@@ -28,12 +28,13 @@ function fixture() {
       type: (value) => { doc += value; options.onChange() },
     }
   }
+  const box = { confirm: () => Promise.reject('close') }
   const setup = new Function('vue', 'api', 'makeEditor', 'defineProps', 'defineEmits', 'ElMessage', 'ElMessageBox', 'performance',
     'const { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } = vue;\n' +
-    source + '\nreturn { tabs, cms, hostEls, addTab, closeTab, pollTick, saveTab, saveAndExit: typeof saveAndExit === "function" ? saveAndExit : undefined };')
+    source + '\nreturn { tabs, cms, hostEls, addTab, closeTab, closeTabsOnSide, pollTick, saveTab, saveAndExit: typeof saveAndExit === "function" ? saveAndExit : undefined };')
   const state = setup({ ...vue, nextTick: (cb) => queued.push(cb), onMounted() {},
     onBeforeUnmount: (cb) => unmount.push(cb), watch: (...args) => { unmount.push(vue.watch(...args)) } }, api, createEditor,
-    () => props, () => (event) => events.push(event), { success() {} }, {}, { now: () => 1000 })
+    () => props, () => (event) => events.push(event), { success() {} }, box, { now: () => 1000 })
   async function open(connId = 'connection-a', path = '/test.txt', uid) {
     state.addTab(connId, path, uid)
     state.hostEls[state.tabs.value.at(-1).key] = {}
@@ -42,7 +43,14 @@ function fixture() {
     await Promise.resolve()
     return { load, tab: state.tabs.value.at(-1), request: requests.at(-1) }
   }
-  return { ...state, open, api, props, saves, events, queued, unmount: () => unmount.forEach((cb) => cb()), requests }
+  return { ...state, open, api, props, saves, events, queued, box, unmount: () => unmount.forEach((cb) => cb()), requests }
+}
+
+async function openLoaded(f, path) {
+  const opened = await f.open('connection-a', path, 'stable-a')
+  opened.request.resolve({ content: path })
+  await opened.load
+  return opened.tab
 }
 
 test('typing immediately updates dirty state through Vue reactivity', async () => {
@@ -255,6 +263,74 @@ test('reconnect during save keeps the file open until it is saved through the ne
   await f.saveAndExit(opened.tab)
   assert.equal(f.tabs.value.length, 0)
   assert.equal(f.saves.at(-1).connId, 'connection-new')
+  f.unmount()
+})
+
+test('close others keeps the clicked file', async () => {
+  const f = fixture()
+  const a = await openLoaded(f, '/a.txt')
+  const b = await openLoaded(f, '/b.txt')
+  const c = await openLoaded(f, '/c.txt')
+  await f.closeTabsOnSide(b, 'others')
+  assert.deepEqual(f.tabs.value, [b])
+  assert.ok(!f.tabs.value.includes(a) && !f.tabs.value.includes(c))
+  f.unmount()
+})
+
+test('close left and close right only remove that side', async () => {
+  const f = fixture()
+  await openLoaded(f, '/left.txt')
+  const mid = await openLoaded(f, '/mid.txt')
+  const right = await openLoaded(f, '/right.txt')
+  await f.closeTabsOnSide(mid, 'left')
+  assert.deepEqual(f.tabs.value, [mid, right])
+  await f.closeTabsOnSide(mid, 'right')
+  assert.deepEqual(f.tabs.value, [mid])
+  f.unmount()
+})
+
+test('unsaved files on a side ask once and dismissing keeps them', async () => {
+  const f = fixture()
+  const a = await openLoaded(f, '/a.txt')
+  const b = await openLoaded(f, '/b.txt')
+  f.cms.get(a.key).type('x')
+  let asked = 0
+  f.box.confirm = () => { asked += 1; return Promise.reject('close') }
+  await f.closeTabsOnSide(b, 'left')
+  assert.equal(asked, 1)
+  assert.deepEqual(f.tabs.value, [a, b])
+  f.unmount()
+})
+
+test('discard closes dirty neighbors without saving', async () => {
+  const f = fixture()
+  const a = await openLoaded(f, '/a.txt')
+  const b = await openLoaded(f, '/b.txt')
+  f.cms.get(a.key).type('x')
+  f.box.confirm = () => Promise.reject('cancel')
+  await f.closeTabsOnSide(b, 'others')
+  assert.deepEqual(f.tabs.value, [b])
+  assert.equal(f.saves.length, 0)
+  f.unmount()
+})
+
+test('save-and-close drops saved files and keeps a file whose save failed', async () => {
+  const f = fixture()
+  const a = await openLoaded(f, '/a.txt')
+  const b = await openLoaded(f, '/b.txt')
+  const c = await openLoaded(f, '/c.txt')
+  f.cms.get(a.key).type('x')
+  f.cms.get(c.key).type('y')
+  f.box.confirm = () => Promise.resolve()
+  f.api.saveFileContent = async (connId, path, content) => {
+    f.saves.push({ connId, path, content })
+    if (path === '/c.txt') throw new Error('offline')
+  }
+  await f.closeTabsOnSide(b, 'others')
+  assert.deepEqual(f.tabs.value.map((t) => t.path), ['/b.txt', '/c.txt'])
+  assert.equal(c.dirty, true)
+  assert.equal(c.error, 'offline')
+  assert.equal(f.saves[0].path, '/a.txt')
   f.unmount()
 })
 

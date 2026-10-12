@@ -17,6 +17,7 @@
 
 ## 杩涘害璁板綍
 
+- 2026-10-11：编辑器多文件标签右键可「关闭其他 / 关闭左侧 / 关闭右侧」。以被点的标签为锚，正在保存的不关；待关里有未保存修改时沿用单标签的三选一（保存并关闭 / 直接关闭 / 取消），保存失败的留下，其余关掉。editor-state.test.mjs 覆盖这三种关闭。
 - 2026-10-11：右侧文件列表选中一个或多个文件/文件夹后可「复制命令」——操作菜单和行右键生成跨服务器 rsync 拉取命令并写入剪贴板：`rsync -avPs -e 'ssh -p 端口' -- '用户@主机:路径' … .`（-a 归档，-s 保护空格和 $，IPv6 主机加方括号；不写密码）。到目标服务器的目录粘贴回车，从当前连接把文件拉过去。右键多选中的一项覆盖整个选中集，否则只针对该行。剪贴板失败时弹出命令文本供手动复制。copy-command.test.mjs 覆盖命令拼接与菜单接线。
 - 2026-09-30：文本编辑器新增「保存并退出」——保存成功且期间没有新修改时移除当前文件标签，最后一标签关闭退出弹窗；保存失败/重连中途换会话保留本地内容。重连修复：App.openEditor 传 SSH tab 稳定 uid，EditorModal 文件 key 改 uid::path；监听 connections 的 uid→connectionId 映射，只更新请求 id，不重建 CodeMirror/不覆盖已加载的脏内容，同路径双击复用原标签。读取/基线/轮询过滤旧会话响应，未完成读取重连后取消并重新读取；保存期间继续编辑不误置为已保存。新增移动端按钮换行，editor-state.test.mjs 13 项回归通过，npm build + desktop build 已同步资源。
 - 2026-09-30：R 重连支持多 tab 并发 —— 用户真实诉求：第一个 tab 重连中时，切到第二个 tab 按 R 也要能立即重连（不是按一次 R 重连所有——批量方案被否）。重构：删掉全局 reconnectBusy 锁（它会把重连进行中的后续 R 按键静默吞掉），reconnectingUid 单值 ref 改为 reactive Set reconnectingUids（isReconnecting 按 uid 查 Set，多个 tab 同时转圈）；reconnectOne 防重入 = `reconnectingUids.has(conn.uid)` 即 return；onGlobalKeydown 保持只重连「当前激活 tab」（激活 tab 已断开才触发），输入防误触：INPUT/TEXTAREA/contentEditable 聚焦时不触发——但 xterm 的隐藏 textarea 类名是 `xterm-helper-textarea` 必须放行（终端里按 R 正是入口），且只在激活 tab 已断开时 preventDefault，否则 R 要正常打进终端。断开横幅文案维持「按 R 键重连当前标签」。

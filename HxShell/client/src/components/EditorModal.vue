@@ -222,6 +222,66 @@ function closeTab(t) {
     })
 }
 
+// 右键标签：以被点的那一个为锚，关其他 / 左侧 / 右侧。正在保存的不关。
+const tabMenu = reactive({ visible: false, x: 0, y: 0, key: null })
+const menuAnchor = computed(() => tabs.value.find((t) => t.key === tabMenu.key) || null)
+const menuIndex = computed(() => (menuAnchor.value ? tabs.value.indexOf(menuAnchor.value) : -1))
+
+function onTabContext(e, t) {
+  e.stopPropagation()
+  tabMenu.key = t.key
+  tabMenu.x = Math.min(e.clientX, window.innerWidth - 148)
+  tabMenu.y = Math.min(e.clientY, window.innerHeight - 132)
+  tabMenu.visible = true
+}
+function closeTabMenu() {
+  tabMenu.visible = false
+}
+
+function tabsOnSide(anchor, side) {
+  const i = tabs.value.indexOf(anchor)
+  if (i < 0) return []
+  if (side === 'others') return tabs.value.filter((t) => t !== anchor)
+  if (side === 'left') return tabs.value.slice(0, i)
+  if (side === 'right') return tabs.value.slice(i + 1)
+  return []
+}
+
+function closeTabsOnSide(anchor, side) {
+  closeTabMenu()
+  const targets = tabsOnSide(anchor, side).filter((t) => !t.saving)
+  if (!targets.length) return Promise.resolve()
+  const dirty = targets.filter((t) => t.dirty && !t.loading)
+  const drop = () => {
+    for (let i = targets.length - 1; i >= 0; i--) {
+      const t = targets[i]
+      if (tabs.value.includes(t) && !t.saving) removeTab(t)
+    }
+  }
+  if (!dirty.length) {
+    drop()
+    return Promise.resolve()
+  }
+  const label = dirty.length === 1 ? `「${fname(dirty[0].path)}」` : `${dirty.length} 个文件`
+  return ElMessageBox.confirm(`${label}有未保存的修改，直接关闭将丢失这些改动。`, '未保存的修改', {
+    confirmButtonText: '保存并关闭',
+    cancelButtonText: '直接关闭',
+    distinguishCancelAndClose: true,
+    type: 'warning',
+  })
+    .then(async () => {
+      // 先保存脏标签；失败的留下，干净的和已保存的关掉
+      for (const t of targets) {
+        if (!tabs.value.includes(t) || t.saving) continue
+        if (t.dirty && !t.loading && !await saveTab(t)) return
+        if (tabs.value.includes(t) && !(t.dirty && !t.loading)) removeTab(t)
+      }
+    })
+    .catch((action) => {
+      if (action === 'cancel') drop() // 「直接关闭」；Esc / 点叉取消，一个都不关
+    })
+}
+
 // 弹窗关闭守卫：任一标签有未保存修改时先询问。「保存并关闭」会依次保存全部脏标签，
 // 任一保存失败（error 置位）不关闭；Esc / X 掉确认框留在编辑器。
 function guardClose(done) {
@@ -309,9 +369,11 @@ watch(() => props.seq, () => addTab(props.connId, props.path))
 onMounted(() => {
   addTab(props.connId, props.path)
   pollTimer = setInterval(pollTick, POLL_MS)
+  if (typeof document !== 'undefined') document.addEventListener('click', closeTabMenu)
 })
 
 onBeforeUnmount(() => {
+  if (typeof document !== 'undefined') document.removeEventListener('click', closeTabMenu)
   if (pollTimer) clearInterval(pollTimer)
   for (const controller of loadControllers.values()) controller.abort()
   loadControllers.clear()
@@ -339,7 +401,7 @@ onBeforeUnmount(() => {
       </div>
     </template>
 
-    <!-- 文件标签：多于一个文件时出现，可切换 / 单独关闭 -->
+    <!-- 文件标签：多于一个文件时出现，可切换 / 单独关闭；右键可批量关 -->
     <div v-if="tabs.length > 1" class="etabs">
       <div
         v-for="t in tabs"
@@ -348,6 +410,7 @@ onBeforeUnmount(() => {
         :class="{ active: t.key === activeKey }"
         :title="t.path"
         @click="activeKey = t.key"
+        @contextmenu.prevent="onTabContext($event, t)"
       >
         <span class="etab-name">{{ fname(t.path) }}</span>
         <span v-if="t.dirty" class="etab-dot dirty" title="未保存">●</span>
@@ -355,6 +418,19 @@ onBeforeUnmount(() => {
         <el-icon class="etab-close" title="关闭该文件" @click.stop="closeTab(t)"><Close /></el-icon>
       </div>
     </div>
+    <Teleport to="body">
+      <div
+        v-if="tabMenu.visible && menuAnchor"
+        class="etab-menu"
+        :style="{ left: tabMenu.x + 'px', top: tabMenu.y + 'px' }"
+        @click.stop
+        @contextmenu.prevent.stop
+      >
+        <button type="button" class="etab-menu-item" @click="closeTabsOnSide(menuAnchor, 'others')">关闭其他</button>
+        <button type="button" class="etab-menu-item" :disabled="menuIndex <= 0" @click="closeTabsOnSide(menuAnchor, 'left')">关闭左侧</button>
+        <button type="button" class="etab-menu-item" :disabled="menuIndex < 0 || menuIndex >= tabs.length - 1" @click="closeTabsOnSide(menuAnchor, 'right')">关闭右侧</button>
+      </div>
+    </Teleport>
 
     <!-- 每个文件一个 pane；v-show 切换，CodeMirror 实例常驻 -->
     <div
@@ -510,6 +586,37 @@ onBeforeUnmount(() => {
 .etab-close:hover {
   color: #e5484d;
   background: #f0f2f5;
+}
+.etab-menu {
+  position: fixed;
+  z-index: 6000;
+  min-width: 132px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(31, 45, 61, 0.14);
+}
+.etab-menu-item {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font-size: 13px;
+  color: #1f2d3d;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.etab-menu-item:hover:not(:disabled) {
+  background: #eef3fa;
+  color: #2d6cdf;
+}
+.etab-menu-item:disabled {
+  color: #c0c8d2;
+  cursor: not-allowed;
 }
 .loading {
   padding: 0 0 8px;
