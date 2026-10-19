@@ -31,7 +31,7 @@ function fixture() {
   const box = { confirm: () => Promise.reject('close') }
   const setup = new Function('vue', 'api', 'makeEditor', 'defineProps', 'defineEmits', 'ElMessage', 'ElMessageBox', 'performance',
     'const { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } = vue;\n' +
-    source + '\nreturn { tabs, cms, hostEls, addTab, closeTab, closeTabsOnSide, pollTick, saveTab, saveAndExit: typeof saveAndExit === "function" ? saveAndExit : undefined };')
+    source + '\nreturn { tabs, cms, hostEls, addTab, closeTab, closeTabsOnSide, guardClose, pollTick, saveTab, saveAndExit: typeof saveAndExit === "function" ? saveAndExit : undefined };')
   const state = setup({ ...vue, nextTick: (cb) => queued.push(cb), onMounted() {},
     onBeforeUnmount: (cb) => unmount.push(cb), watch: (...args) => { unmount.push(vue.watch(...args)) } }, api, createEditor,
     () => props, () => (event) => events.push(event), { success() {} }, box, { now: () => 1000 })
@@ -347,4 +347,38 @@ test('App opens files with a stable SSH tab identity before and after reconnect'
   openEditor('new-id', '/test.txt')
   assert.equal(editor.value.connectionUid, 'stable-a')
   assert.equal(editor.value.connId, 'new-id')
+})
+
+test('dialog can hide during save and open another file before save completes', async () => {
+  const f = fixture()
+  const t = await openLoaded(f, '/saving.txt')
+  f.cms.get(t.key).type('edit')
+  let finish
+  f.api.saveFileContent = () => new Promise(resolve => { finish = resolve })
+  const saving = f.saveTab(t)
+  let closed = false
+  f.guardClose(() => { closed = true; f.props.open = false })
+  assert.equal(closed, true)
+  assert.equal(t.saving, true)
+  await openLoaded(f, '/other.txt')
+  finish()
+  assert.equal(await saving, true)
+  assert.equal(f.tabs.value.length, 2)
+  f.unmount()
+})
+
+test('failed background save retains document after dialog closes', async () => {
+  const f = fixture()
+  const t = await openLoaded(f, '/saving.txt')
+  f.cms.get(t.key).type('edit')
+  let fail
+  f.api.saveFileContent = () => new Promise((resolve, reject) => { fail = reject })
+  const saving = f.saveTab(t)
+  f.guardClose(() => { f.props.open = false })
+  fail(new Error('save failed'))
+  assert.equal(await saving, false)
+  assert.equal(t.error, 'save failed')
+  assert.equal(t.dirty, true)
+  assert.equal(f.cms.get(t.key).getDoc(), '/saving.txtedit')
+  f.unmount()
 })

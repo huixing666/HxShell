@@ -285,8 +285,8 @@ function closeTabsOnSide(anchor, side) {
 // 弹窗关闭守卫：任一标签有未保存修改时先询问。「保存并关闭」会依次保存全部脏标签，
 // 任一保存失败（error 置位）不关闭；Esc / X 掉确认框留在编辑器。
 function guardClose(done) {
-  if (tabs.value.some((t) => t.saving)) return
-  const dirtyTabs = tabs.value.filter((t) => t.dirty && !t.loading)
+  // 隐藏弹窗时保留正在保存的标签，后台请求继续完成。
+  const dirtyTabs = tabs.value.filter((t) => t.dirty && !t.loading && !t.saving)
   if (!dirtyTabs.length) { done(); return }
   const label = dirtyTabs.length === 1 ? `「${fname(dirtyTabs[0].path)}」` : `${dirtyTabs.length} 个文件`
   ElMessageBox.confirm(`${label}有未保存的修改，直接关闭将丢失这些改动。`, '未保存的修改', {
@@ -480,7 +480,7 @@ onBeforeUnmount(() => {
           <span class="hint">{{ activeTab.lines }} 行 · Ctrl+F 查找 · Alt+G 跳转行 · Ctrl+S 保存</span>
         </div>
         <div class="foot-right">
-          <el-button :disabled="activeTab.saving" @click="guardClose(() => emit('close'))">关闭</el-button>
+          <el-button @click="guardClose(() => emit('close'))">关闭</el-button>
           <el-button type="primary" :loading="activeTab.saving" :disabled="!activeTab.loaded || activeTab.loading" @click="saveTab(activeTab)">
             {{ activeTab.saving ? '保存中…' : '保存 (Ctrl+S)' }}
           </el-button>
