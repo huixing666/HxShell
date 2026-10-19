@@ -431,6 +431,8 @@ async function openInteractive() {
       })
       // 右键粘贴：接管 contextmenu，从剪贴板读取内容后发送
       termHost.value.addEventListener('contextmenu', onTermContextMenu)
+      // Ctrl+V / 桌面壳菜单粘贴：捕获阶段拦下来统一规范化（见 onTermPaste）
+      termHost.value.addEventListener('paste', onTermPaste, true)
       xterm.writeln('--- 交互终端已连接（可直接输入；Ctrl+C 中断，exit 退出） ---')
       if (inBrowser) {
         // 浏览器环境会截走 Ctrl+W（nano 搜索）等保留快捷键，给出路提示
@@ -518,6 +520,28 @@ async function copyToClipboard(text) {
   xterm?.focus() // 兜底路径短暂移走了焦点，还给终端
 }
 
+// 统一换行格式并去掉末尾提交键；保留空白和反斜杠，避免改写字符串或编辑器内容。
+function normalizePasteText(text) {
+  return String(text ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n+$/, '')
+}
+
+// 把整段文本一次性送进终端。
+// 远端已开启 bracketed paste 时，单行和多行都用括号粘贴（ESC[200~ … ESC[201~）包裹：
+// shell 会把整段当字面量插入编辑缓冲区，绝不会在中间的换行处逐行执行，
+// 续行反斜杠由 shell 在解析阶段处理，最后只由末尾那一个回车统一提交。
+// 远端未开启时发送 LF 换行，保留 shell 的反斜杠续行语义。
+function sendPaste(text, execute) {
+  const body = normalizePasteText(text)
+  if (!body) return
+  const bracketed = !!xterm?.modes?.bracketedPasteMode
+  const payload = bracketed
+    ? '\x1b[200~' + body + '\x1b[201~' + (execute ? '\r' : '')
+    : body + (execute ? '\r' : '')
+  sendInput(payload)
+}
+
 // 处理待粘贴内容：末尾是换行时弹窗询问是否执行（内容可编辑）
 function handlePasteText(text) {
   if (!text) return
@@ -525,8 +549,19 @@ function handlePasteText(text) {
     pasteDraft.value = text
     pasteDraftVisible.value = true
   } else {
-    sendInput(text)
+    sendPaste(text, false)
   }
+}
+
+// 拦截原生粘贴（Ctrl+V / 桌面壳菜单粘贴），统一走 sendPaste：
+// 保留 LF，避免 xterm 默认把换行转成回车后破坏反斜杠续行。
+// 读不到剪贴板内容时不拦截，交给 xterm 原处理，避免粘贴失灵。
+function onTermPaste(e) {
+  const text = e.clipboardData?.getData('text')
+  if (!text) return
+  e.preventDefault()
+  e.stopPropagation()
+  handlePasteText(text)
 }
 
 // 读取剪贴板并发送（右键触发；右键是用户手势，Clipboard API 可直接读）
@@ -556,16 +591,16 @@ function doPasteExecute() {
   const t = pasteDraft.value
   pasteDraftVisible.value = false
   if (!t) return
-  sendInput(/[\r\n]$/.test(t) ? t : t + '\r')
+  sendPaste(t, true)
   xterm?.focus()
 }
 
-// 弹窗「仅粘贴」：去掉末尾换行后发送，不触发执行
+// 弹窗「仅粘贴」：不补提交键；括号粘贴开启时整段进入编辑缓冲区
 function doPastePlain() {
   const t = pasteDraft.value
   pasteDraftVisible.value = false
   if (!t) return
-  sendInput(t.replace(/[\r\n]+$/, ''))
+  sendPaste(t, false)
   xterm?.focus()
 }
 
@@ -664,6 +699,7 @@ function closeInteractive() {
   if (ws) { try { ws.close() } catch (_) {} ws = null }
   if (xterm) { try { xterm.dispose() } catch (_) {} xterm = null }
   if (termHost.value) termHost.value.removeEventListener('contextmenu', onTermContextMenu)
+  if (termHost.value) termHost.value.removeEventListener('paste', onTermPaste, true)
   window.removeEventListener('beforeunload', onBeforeUnload)
   fitAddon = null
 }
